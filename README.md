@@ -17,6 +17,9 @@ Includes a set of [in-game datapads](InventoryMonitor2/datapads/) for quick refe
 ### [RedAlert](RedAlert/RedAlert.md)
 Saves all settings of a named lighting group and forces every light to solid red on `activate`. Restores each light to its original colour, intensity, radius, and blink settings on `deactivate`. State persists across game saves and PB reboots.
 
+### [HERMES](Hermes/Hermes.md)
+Intergrid messaging service for town buildings. Buildings broadcast alerts (low hydrogen, low power, etc.) over IGC when Event Controllers fire. A central control building receives all alerts and displays them on a timestamped LCD dispatch board. One script handles both sender and receiver roles via Custom Data. Includes preprogrammed shortcodes, antenna auto-management, optional delivery confirmation with retry queue, and a persistent message log.
+
 ### R.O.S — Rev Operating System
 
 Base station management system driving three LCD panels simultaneously: dock connector status, a proximity/approach scanner with runway lights, and a live miner fleet tracker.

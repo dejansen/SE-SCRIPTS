@@ -36,11 +36,26 @@ There is no way to run a single test from the command line. All testing is done 
 
 ```
 /
-├── AGENTS.md                  # This file
-├── InventoryMonitor.cs        # Programmable Block script (v1 — light-centric)
-├── InventoryMonitor.md        # Documentation and in-game setup guide (v1)
-├── InventoryMonitor2.cs       # Programmable Block script (v2 — container-centric, multi-item, timer/light actions)
-└── InventoryMonitor2.md       # Documentation and in-game setup guide (v2)
+├── CLAUDE.md                      # This file
+├── SE-SCRIPTING-RULES.md          # Verified scripting rules and API reference
+├── README.md                      # Repository overview
+├── InventoryMonitor/
+│   ├── InventoryMonitor.cs        # Light-centric inventory monitor (v1)
+│   └── InventoryMonitor.md
+├── InventoryMonitor2/
+│   ├── InventoryMonitor2.cs       # Container-centric monitor with multi-item and timer/light actions (v2)
+│   └── InventoryMonitor2.md
+├── RedAlert/
+│   ├── RedAlert.cs                # Saves and restores a lighting group state; forces solid red on alert
+│   └── RedAlert.md
+├── R.O.S/
+│   ├── ROS-Main.cs                # Base station: dock monitor, proximity scanner, fleet tracker
+│   ├── ROS-MinerBroadcast.cs      # Miner companion: broadcasts telemetry over IGC
+│   ├── ROS-DockingMonitor.md
+│   └── ROS-MinerBroadcast.md
+└── Hermes/
+    ├── Hermes.cs                  # Intergrid messaging service: sender + receiver in one script
+    └── Hermes.md
 ```
 
 Each script gets:
