@@ -29,20 +29,3 @@ AMMO (SubtypeId = in-game name):
 EXAMPLE:
   AmmoMagazine/NATO_25x184mm    = 500
   AmmoMagazine/LargeCalibreAmmo = 20
-
-
-  [items]
-AmmoMagazine/GatlinAmmo = 10
-AmmoMagazine/ArtilleryShell   = 10
-AmmoMagazine/AssaultCannonShell   = 10
-
-[command]
-action = timer
-timer_low = DEFPL-TB-LOW
-timer_ok  = DEFPL-TB-OK
-
-
-AmmoMagazine/NATO_5p56x45mm = 200
-Gatlingammobox
-assaultcannonshells
-artilleryshells
