@@ -1,0 +1,34 @@
+INVENTORY MONITOR 2 — Datapad 1 of 6
+OVERVIEW & SETUP
+
+Tags cargo containers (not lights). Each
+container defines what to watch and what
+action to take when stock drops low.
+
+STEP 1 — Programmable Block
+Paste InventoryMonitor2.cs into a PB.
+Click Check Code, then Remember & Exit.
+
+STEP 2 — Tag (optional)
+Default tag is [MONITOR]. To change it,
+open PB Custom Data and add:
+  MONITOR_TAG=[MY_TAG]
+
+STEP 3 — Tag your containers
+Add the tag to any cargo container name:
+  [MONITOR] Ammo Storage
+  [MONITOR] Iron Supply
+
+Tag can appear anywhere in the name.
+
+STEP 4 — See datapad 2 for container
+         Custom Data format.
+
+STEP 7 — Driving Timer Block
+Place a Timer Block. Set:
+  Trigger Delay: 00:01:00
+  Action 1: Run  -> Programmable Block
+  Action 2: Start -> this Timer Block
+
+Leave Run command field blank.
+Click Trigger Now once to start the loop.

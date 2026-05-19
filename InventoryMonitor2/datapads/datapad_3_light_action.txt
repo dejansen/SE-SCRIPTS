@@ -1,0 +1,32 @@
+INVENTORY MONITOR 2 — Datapad 3 of 6
+ACTION: LIGHT
+
+Use action=light to control a colored
+light block based on stock level.
+
+CONTAINER CUSTOM DATA:
+[command]
+action     = light
+light_name = {My Alert Light}
+
+SETUP:
+Place any light block (Interior Light,
+Spotlight, etc.) on your grid.
+Name it exactly as in light_name.
+No tag needed on the light itself.
+
+LIGHT STATES:
+  GREEN  (solid)    - all items OK
+  ORANGE (blinking) - at least one LOW
+  RED    (solid)    - config error
+
+The light turns RED immediately if the
+container Custom Data is missing or has
+a formatting mistake. Fix the config and
+re-run the script to clear it.
+
+One light can be shared by multiple
+containers — each run updates its state
+based on the last container checked.
+For independent signals use one light
+per container.

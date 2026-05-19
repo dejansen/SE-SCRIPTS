@@ -1,0 +1,34 @@
+INVENTORY MONITOR 2 — Datapad 2 of 6
+CONTAINER CUSTOM DATA FORMAT
+
+Open the tagged container's Custom Data
+and paste a config block like this:
+
+--- LIGHT EXAMPLE ---
+[items]
+Ingot/Iron      = 2000
+Ingot/Nickel    = 500
+Component/Motor = 100
+
+[command]
+action     = light
+light_name = {Iron Alert Light}
+
+--- TIMER EXAMPLE ---
+[items]
+AmmoMagazine/NATO_5p56x45mm = 200
+AmmoMagazine/Missile200mm   = 50
+
+[command]
+action    = timer
+timer_low = {Ammo_Alert_Timer}
+timer_ok  = {Ammo_OK_Timer}
+
+NOTES:
+- Multiple items per container supported.
+  Any ONE below threshold triggers action.
+- Wrap block names in { } braces.
+- timer_ok is optional.
+- Lines starting with ; are comments.
+- See datapad 3 for light action detail.
+- See datapad 4 for timer action detail.

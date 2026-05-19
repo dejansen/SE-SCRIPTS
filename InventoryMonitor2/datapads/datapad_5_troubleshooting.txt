@@ -1,0 +1,31 @@
+INVENTORY MONITOR 2 — Datapad 5 of 6
+TROUBLESHOOTING
+
+SYMPTOM: "No containers tagged [MONITOR]"
+FIX: Container name must contain the tag
+     exactly, including brackets.
+
+SYMPTOM: "WARNING: bad Custom Data on..."
+FIX: Check [items] section has at least
+     one valid line. Check [command] has
+     action= and the required name field.
+
+SYMPTOM: Light stays red
+FIX: Config parse failed. Re-check that
+     section headers are spelled right,
+     = signs are present, and Type/Subtype
+     is correct.
+
+SYMPTOM: Light or timer not found
+FIX: Name must match exactly (case
+     sensitive). The warning shows
+     (len=N) — count characters in-game
+     to spot a trailing space.
+
+SYMPTOM: Stock shows 0, item is present
+FIX: Subtype spelling is wrong. Check
+     capitalisation. See datapad 6.
+
+SYMPTOM: Script never runs
+FIX: Driving Timer Block is not started.
+     Open it and click Trigger Now once.

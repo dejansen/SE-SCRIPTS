@@ -1,0 +1,48 @@
+INVENTORY MONITOR 2 — Datapad 6 of 6
+ITEM TYPE REFERENCE
+
+FORMAT:  Type/Subtype = threshold
+TYPES:   Ingot  Ore  Component
+         AmmoMagazine  Tool  GasContainer
+
+INGOTS & ORES:
+  Iron, Nickel, Cobalt, Magnesium,
+  Silicon, Silver, Gold, Platinum,
+  Uranium, Stone  (Ore also: Ice)
+
+COMPONENTS (common):
+  SteelPlate, InteriorPlate, Motor,
+  Construction, MetalGrid, SmallTube,
+  LargeTube, Computer, Reactor,
+  BulletproofGlass, SolarCell, Canvas
+
+AMMO (SubtypeId = in-game name):
+  NATO_5p56x45mm    S-20A Magazine
+  AutocannonClip    Autocannon Mag
+  NATO_25x184mm     Gatling Ammo Box
+  MediumCalibreAmmo Assault Cannon Shell
+  LargeCalibreAmmo  Artillery Shell
+  Missile200mm      Rocket
+  LargeRailgunAmmo  Large Railgun Sabot
+  SmallRailgunAmmo  Small Railgun Sabot
+
+EXAMPLE:
+  AmmoMagazine/NATO_25x184mm    = 500
+  AmmoMagazine/LargeCalibreAmmo = 20
+
+
+  [items]
+AmmoMagazine/GatlinAmmo = 10
+AmmoMagazine/ArtilleryShell   = 10
+AmmoMagazine/AssaultCannonShell   = 10
+
+[command]
+action = timer
+timer_low = DEFPL-TB-LOW
+timer_ok  = DEFPL-TB-OK
+
+
+AmmoMagazine/NATO_5p56x45mm = 200
+Gatlingammobox
+assaultcannonshells
+artilleryshells

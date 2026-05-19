@@ -1,0 +1,32 @@
+INVENTORY MONITOR 2 — Datapad 4 of 6
+ACTION: TIMER
+
+Use action=timer to trigger a Timer Block
+when stock state changes.
+
+CONTAINER CUSTOM DATA:
+[command]
+action    = timer
+timer_low = {My_Alert_Timer}
+timer_ok  = {My_OK_Timer}
+
+timer_ok is optional. Omit it if you
+don't need a recovery signal.
+
+SETUP:
+Place one or two Timer Blocks and name
+them exactly as in timer_low / timer_ok.
+Configure their toolbar actions as normal
+(lights, sounds, doors, etc.).
+
+BEHAVIOUR:
+- timer_low fires ONCE when state
+  changes from OK to LOW.
+- timer_ok fires ONCE when state
+  changes from LOW back to OK.
+- Nothing fires if state did not change.
+
+NOTE: After script recompile the state
+memory resets. If stock is already LOW
+when the script first runs, timer_low
+will fire once on that first run.
