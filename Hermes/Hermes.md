@@ -265,6 +265,16 @@ Msgs: 3 / 20
 
 ---
 
+## Known Limitations
+
+| Issue | Notes |
+|---|---|
+| **Two PBs on the same grid (sender + receiver)** | If a building runs a dedicated sender PB and a dedicated receiver PB, the receiver will log the sender's own broadcasts. The self-filter (`msg.Source == IGC.Me`) only works when both roles are on the same PB (`mode = both`). Fix: use `mode = both` on one PB, or embed the sender's grid EntityId in the payload so receivers can filter by grid. Not yet implemented. |
+| **Sender grid unloaded** | If nobody is near the sending building, the retry queue pauses. Messages resume when the grid loads again. |
+| **Storage cleared on recompile** | SE clears `Storage` when a script is recompiled from the editor. Messages and queues are lost. This is an SE limitation. |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
