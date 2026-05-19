@@ -27,6 +27,8 @@ One script, two roles. No extra files.
 - **Persistent log** — messages survive PB reboots via `Storage`
 - **CLEAR commands** — dismiss one alert or all at once
 - **Optional ACK mode** — sender retries until receiver confirms delivery
+- **Alert light** — any lighting block with the tag in its name turns on while there are unread messages, off on CLEAR
+- **Alert sound** — any sound block with the tag in its name plays once when a new message arrives
 
 ---
 
@@ -62,6 +64,28 @@ One script, two roles. No extra files.
 6. The script runs automatically at ~1.67s intervals (`Update100`) and refreshes the LCD.
 
 > **Antenna:** The receiver's antenna must be on at all times. The script enables it automatically on startup and re-enables it if it is ever turned off.
+
+---
+
+## Alert Light and Sound Block
+
+Place any lighting block or sound block on the same construct as the receiver PB and include the `lcd_tag` value in its name.
+
+| Block | Behavior |
+|---|---|
+| Lighting block | Turns **on** while there are unread messages; turns **off** when you run CLEAR or FORWARD |
+| Sound block | **Plays once** each time a new message arrives; stops on CLEAR |
+
+The sound block plays whatever sound and at whatever volume you configure in-game — the script just calls `Play()` on it. A looping siren works fine; it will be stopped on CLEAR.
+
+Multiple lights and sound blocks with the tag are all triggered simultaneously.
+
+**Example names** (default tag `[HERMES]`):
+```
+[HERMES] Alert Light
+[HERMES] Alarm
+[HERMES] Siren
+```
 
 ---
 

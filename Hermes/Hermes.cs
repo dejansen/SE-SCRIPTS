@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.1";
+private const string VERSION         = "1.2";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -78,11 +78,13 @@ private IMyRadioAntenna      _antenna;
 private IMyBroadcastListener _broadcastListener;
 private bool                 _pendingAntennaOff = false;
 
-private readonly List<IMyTextPanel>    _lcdBuffer     = new List<IMyTextPanel>();
-private readonly List<IMyRadioAntenna> _antennaBuffer = new List<IMyRadioAntenna>();
-private readonly List<ReceivedMessage> _messages      = new List<ReceivedMessage>();
-private readonly List<QueuedMessage>   _queue         = new List<QueuedMessage>();
-private readonly StringBuilder         _sb            = new StringBuilder();
+private readonly List<IMyTextPanel>      _lcdBuffer     = new List<IMyTextPanel>();
+private readonly List<IMyLightingBlock>  _alertLights   = new List<IMyLightingBlock>();
+private readonly List<IMySoundBlock>     _alertSounds   = new List<IMySoundBlock>();
+private readonly List<IMyRadioAntenna>   _antennaBuffer = new List<IMyRadioAntenna>();
+private readonly List<ReceivedMessage>   _messages      = new List<ReceivedMessage>();
+private readonly List<QueuedMessage>     _queue         = new List<QueuedMessage>();
+private readonly StringBuilder           _sb            = new StringBuilder();
 
 // =========================================================================
 // Constructor
@@ -189,9 +191,12 @@ private void OnTick()
 {
     if (_mode != ScriptMode.Sender)
     {
+        int before = _messages.Count;
         PollBroadcast();
+        bool newArrived = _messages.Count > before;
         EnsureAntennaOn();
         RefreshLcds();
+        RefreshAlertBlocks(newArrived);
     }
 
     if (_ackEnabled)
@@ -367,6 +372,7 @@ private bool TryHandleClear(string argument)
     {
         _messages.Clear();
         Echo("All messages cleared.");
+        RefreshAlertBlocks(false);
         RefreshLcds();
         UpdatePbSurface();
         return true;
@@ -381,6 +387,7 @@ private bool TryHandleClear(string argument)
             var m = _messages[index - 1];
             _messages.RemoveAt(index - 1);
             Echo("Cleared #" + index + ": " + m.GridName + " — " + m.Text);
+            RefreshAlertBlocks(false);
             RefreshLcds();
             UpdatePbSurface();
             return true;
@@ -424,6 +431,7 @@ private bool TryHandleClear(string argument)
 
         _messages.Clear();
         Echo("Forwarded " + count + " message(s) on " + _channel + ".");
+        RefreshAlertBlocks(false);
         RefreshLcds();
         UpdatePbSurface();
         return true;
@@ -483,6 +491,25 @@ private string BuildDispatchContent()
     _sb.AppendLine(bar);
     _sb.Append(" Run with CLEAR or CLEAR N to dismiss");
     return _sb.ToString();
+}
+
+private void RefreshAlertBlocks(bool newMessageArrived)
+{
+    _alertLights.Clear();
+    GridTerminalSystem.GetBlocksOfType<IMyLightingBlock>(_alertLights, b =>
+        b.IsSameConstructAs(Me) && b.CustomName.Contains(_lcdTag));
+
+    _alertSounds.Clear();
+    GridTerminalSystem.GetBlocksOfType<IMySoundBlock>(_alertSounds, b =>
+        b.IsSameConstructAs(Me) && b.CustomName.Contains(_lcdTag));
+
+    bool hasMessages = _messages.Count > 0;
+    foreach (var light in _alertLights)
+        light.Enabled = hasMessages;
+
+    if (newMessageArrived)
+        foreach (var sound in _alertSounds)
+            sound.Play();
 }
 
 // =========================================================================
