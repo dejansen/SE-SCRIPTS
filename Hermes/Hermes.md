@@ -1,6 +1,6 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.4** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
+**Version 1.5** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
 
 A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a large LCD dispatch board.
 

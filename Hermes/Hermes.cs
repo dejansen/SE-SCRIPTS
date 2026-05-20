@@ -1,5 +1,5 @@
 // =====================================================================
-// HERMES — Intergrid Messaging Service  v1.4
+// HERMES — Intergrid Messaging Service  v1.5
 // =====================================================================
 // Single script for sender, receiver, both, or local roles.
 // Configure via Custom Data on the Programmable Block.
@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.4";
+private const string VERSION         = "1.5";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -486,7 +486,6 @@ private void RefreshLcds()
 
     if (_lcdBuffer.Count == 0) return;
 
-    string content = BuildDispatchContent();
     foreach (var block in _lcdBuffer)
     {
         var provider = (IMyTextSurfaceProvider)block;
@@ -496,13 +495,14 @@ private void RefreshLcds()
         var surface = provider.GetSurface(idx);
         surface.ContentType = ContentType.TEXT_AND_IMAGE;
         surface.Font        = "Monospace";
-        surface.WriteText(content);
+        surface.WriteText(BuildDispatchContent(surface));
     }
 }
 
-private string BuildDispatchContent()
+private string BuildDispatchContent(IMyTextSurface surface)
 {
-    string bar = new string('═', 50);   // ══════...
+    int    width = EstimateCharsPerLine(surface);
+    string bar   = new string('═', width);
 
     _sb.Clear();
     _sb.AppendLine(" HERMES DISPATCH");
@@ -522,15 +522,66 @@ private string BuildDispatchContent()
                 ? m.GridName.Substring(0, 11) + "..."
                 : m.GridName;
 
-            _sb.AppendLine(" #" + (i + 1).ToString().PadLeft(2)
+            string prefix = " #" + (i + 1).ToString().PadLeft(2)
                 + "  [" + m.Timestamp + "]  "
-                + name.PadRight(14) + "  " + m.Text);
+                + name.PadRight(14) + "  ";
+
+            AppendWrapped(prefix, m.Text, width);
         }
     }
 
     _sb.AppendLine(bar);
     _sb.Append(" Run with CLEAR or CLEAR N to dismiss");
     return _sb.ToString();
+}
+
+private int EstimateCharsPerLine(IMyTextSurface surface)
+{
+    _sb.Clear();
+    _sb.Append('W');
+    float charW = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).X;
+    if (charW <= 0f) return 50;
+    return Math.Max(10, (int)(surface.SurfaceSize.X / charW));
+}
+
+private void AppendWrapped(string prefix, string text, int lineWidth)
+{
+    int availFirst = lineWidth - prefix.Length;
+
+    // If text fits on one line, or prefix already fills the line, keep it simple
+    if (availFirst < 4 || text.Length <= availFirst)
+    {
+        _sb.AppendLine(prefix + text);
+        return;
+    }
+
+    // Word-wrap: fill the first line then continuation lines indented to prefix width
+    string continuation = new string(' ', prefix.Length);
+    bool   isFirst      = true;
+    string cur          = "";
+
+    foreach (string word in text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+    {
+        int avail = isFirst ? availFirst : (lineWidth - continuation.Length);
+
+        if (cur.Length == 0)
+        {
+            cur = word;
+        }
+        else if (cur.Length + 1 + word.Length <= avail)
+        {
+            cur += " " + word;
+        }
+        else
+        {
+            _sb.AppendLine((isFirst ? prefix : continuation) + cur);
+            isFirst = false;
+            cur     = word;
+        }
+    }
+
+    if (cur.Length > 0)
+        _sb.AppendLine((isFirst ? prefix : continuation) + cur);
 }
 
 private void RefreshAlertBlocks(bool newMessageArrived)
