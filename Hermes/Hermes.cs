@@ -1,5 +1,5 @@
 // =====================================================================
-// HERMES — Intergrid Messaging Service  v1.5
+// HERMES — Intergrid Messaging Service  v1.6
 // =====================================================================
 // Single script for sender, receiver, both, or local roles.
 // Configure via Custom Data on the Programmable Block.
@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.5";
+private const string VERSION         = "1.6";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -518,20 +518,33 @@ private string BuildDispatchContent(IMyTextSurface surface)
         for (int i = 0; i < _messages.Count; i++)
         {
             var    m    = _messages[i];
+            string num  = (i + 1).ToString();
             string name = m.GridName.Length > 14
                 ? m.GridName.Substring(0, 11) + "..."
                 : m.GridName;
 
-            string prefix = " #" + (i + 1).ToString().PadLeft(2)
-                + "  [" + m.Timestamp + "]  "
+            // Full prefix is 31 chars — use it only when the LCD is wide enough
+            string prefix = " #" + num.PadLeft(2) + "  [" + m.Timestamp + "]  "
                 + name.PadRight(14) + "  ";
 
-            AppendWrapped(prefix, m.Text, width);
+            if (width - prefix.Length >= 4)
+            {
+                AppendWrapped(prefix, m.Text, width);
+            }
+            else
+            {
+                // Narrow LCD: compact header on line 1, text word-wrapped below
+                string header = "#" + num + " [" + m.Timestamp + "] " + m.GridName;
+                if (header.Length > width)
+                    header = header.Substring(0, width);
+                _sb.AppendLine(header);
+                AppendWrapped("  ", m.Text, width);
+            }
         }
     }
 
     _sb.AppendLine(bar);
-    _sb.Append(" Run with CLEAR or CLEAR N to dismiss");
+    AppendWrapped(" ", "Run with CLEAR or CLEAR N to dismiss", width);
     return _sb.ToString();
 }
 
@@ -548,8 +561,7 @@ private void AppendWrapped(string prefix, string text, int lineWidth)
 {
     int availFirst = lineWidth - prefix.Length;
 
-    // If text fits on one line, or prefix already fills the line, keep it simple
-    if (availFirst < 4 || text.Length <= availFirst)
+    if (text.Length <= availFirst)
     {
         _sb.AppendLine(prefix + text);
         return;
