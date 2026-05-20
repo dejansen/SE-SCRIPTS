@@ -1,6 +1,6 @@
 # Inventory Monitor 2 — Space Engineers Programmable Block Script
 
-Monitor item stock levels on your grid by tagging **cargo containers**. Each container defines what to watch, the thresholds, and what action to take when stock drops low.
+Monitor item stock levels on your grid by tagging **any inventory block** — cargo containers, reactors, refineries, assemblers, or anything else that holds items. Each tagged block defines what to watch, the thresholds, and what action to take when stock drops low.
 
 ---
 
@@ -9,7 +9,7 @@ Monitor item stock levels on your grid by tagging **cargo containers**. Each con
 Instead of tagging individual light blocks, you tag the **cargo container** (or any inventory block) that matters. The container's Custom Data holds the full configuration:
 
 - **Which items** to monitor and at what thresholds (multiple items per container supported)
-- **What to do** when stock is low — flash a named light block, or trigger a named Event Controller (action relay) on a configurable channel
+- **What to do** when stock is low — flash a named light block, or trigger a Timer Block on state change
 
 The script reads the tag string from the Programmable Block's own Custom Data so you can change it without editing the script.
 
@@ -17,10 +17,11 @@ The script reads the tag string from the Programmable Block's own Custom Data so
 
 ## Features
 
-- Tag cargo containers, not lights — configuration lives with the inventory that matters
-- Multiple items per container — any one falling below threshold triggers the action
-- Two action types per container: **light** (green/orange blinking) or **timer** (trigger a Timer Block on state change)
-- Light block name is specified per container — reuse the same light for multiple containers, or use dedicated lights
+- Tag any inventory block (cargo containers, reactors, refineries, etc.) — configuration lives with the inventory that matters
+- Multiple items per block — any one falling below threshold triggers the action
+- Two action types: **light** (control a light block) or **timer** (trigger a Timer Block on state change)
+- Light color and blink mode are configurable per block via named states (`green`, `blinkorange`, `red`, etc.)
+- Light block name is specified per block — reuse the same light for multiple blocks, or use dedicated lights
 - Timer action only fires on state **change** (ok → low, low → ok) to avoid triggering on every run
 - Tag string is configurable via the Programmable Block's Custom Data
 - Error state (red light) shown automatically when Custom Data is malformed
@@ -44,14 +45,14 @@ MONITOR_TAG=[MY_TAG]
 
 Leave Custom Data empty to use the default `[MONITOR]` tag.
 
-### Step 3 — Tag your cargo containers
+### Step 3 — Tag your inventory blocks
 
-Rename any cargo container (or inventory block) you want to monitor so its name contains your tag. Examples:
+Rename any inventory block you want to monitor so its name contains your tag. This can be a cargo container, reactor, refinery, assembler, or any other block that holds items. Examples:
 
 ```
 [MONITOR] Ammo Storage
 [MONITOR] Iron Supply
-[MONITOR] Main Cargo
+[MONITOR] HE-Large Reactor
 ```
 
 The tag can appear anywhere in the name.
@@ -71,6 +72,8 @@ Component/Motor  = 100
 [command]
 action     = light
 light_name = {Iron Alert Light}
+light_ok   = green        ; optional — defaults to green if omitted
+light_low  = blinkorange  ; optional — defaults to blinkorange if omitted
 ```
 
 #### Full example — timer action
@@ -97,6 +100,8 @@ timer_ok  = {Ammo_OK_Timer}
 | `[items]` | `Type/Subtype = N` | Item to monitor and its threshold |
 | `[command]` | `action` | `light` or `timer` |
 | `[command]` | `light_name` | Name of the light block in `{ }` (required when `action=light`) |
+| `[command]` | `light_ok` | Light state when stock is OK (optional, `action=light` only — see named states below) |
+| `[command]` | `light_low` | Light state when stock is low (optional, `action=light` only — see named states below) |
 | `[command]` | `timer_low` | Name of Timer Block to trigger when stock goes LOW, in `{ }` (required when `action=timer`) |
 | `[command]` | `timer_ok` | Name of Timer Block to trigger when stock returns OK, in `{ }` (optional, `action=timer` only) |
 
@@ -106,13 +111,25 @@ Lines beginning with `;` or `#` are treated as comments and ignored.
 
 Place an **Interior Light** or any light block. Give it the exact name you used in `light_name`. No special tag is needed on the light itself.
 
-**Light states:**
+**Default light states** (when `light_ok` / `light_low` are not set):
 
 | State | Meaning |
 |---|---|
 | Green (solid) | All monitored items are at or above threshold |
-| Orange (blinking) | At least one item is below threshold |
-| Red (solid) | The container's Custom Data is missing or malformed |
+| Orange (blinking, 2s / 50%) | At least one item is below threshold |
+| Red (solid) | The block's Custom Data is missing or malformed |
+
+**Named light states** (use with `light_ok` and `light_low`):
+
+| Value | Behaviour |
+|---|---|
+| `green` | Solid green |
+| `orange` | Solid orange |
+| `red` | Solid red |
+| `blinkgreen` | Blinking green (2s / 50%) |
+| `blinkorange` | Blinking orange (2s / 50%) |
+| `blinkred` | Blinking red (2s / 50%) |
+| `off` | Light disabled |
 
 ### Step 6 — Set up your Timer Blocks (action=timer only)
 
@@ -156,6 +173,7 @@ InventoryMonitor2 — checking 2 container(s)...
 | "WARNING: bad Custom Data on '...'" | `[items]` section is empty, `action` is missing, or required field for the action is absent |
 | Light stays red | Config parse failed — re-check section headers, `=` separators, and Type/Subtype spelling |
 | Light not found warning | `light_name` value does not exactly match the light block's in-game name |
+| "WARNING: unknown light state" | `light_ok` or `light_low` value is misspelled — check against the named states table |
 | Timer not found warning | `timer_low` or `timer_ok` does not match the Timer Block's exact in-game name — the warning shows the name length to help spot trailing spaces |
 | Stock shows 0 but you have the item | Subtype name is wrong — check spelling and capitalisation |
 | Timer fires every run | This should not happen — timer only fires on state change. If it does, the container's EntityId may have changed (e.g. grid merge/split) |

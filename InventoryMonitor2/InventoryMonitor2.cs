@@ -1,5 +1,6 @@
 // InventoryMonitor2 - Space Engineers Programmable Block Script
-// Monitors item quantities across the grid using [MONITOR]-tagged cargo containers.
+// Monitors item quantities across the grid using [MONITOR]-tagged inventory blocks
+// (cargo containers, reactors, refineries, assemblers — any block with an inventory).
 //
 // Programmable Block Custom Data (optional):
 //   MONITOR_TAG=[MONITOR]
@@ -15,6 +16,10 @@
 //
 //   ; --- for action=light ---
 //   light_name = {My Alert Light}
+//   light_ok   = green        ; optional — overrides default green
+//   light_low  = blinkorange  ; optional — overrides default blinkorange
+//
+// Named light states: green, orange, red, blinkorange, blinkgreen, blinkred, off
 //
 //   ; --- for action=timer ---
 //   timer_low = {My Timer Low}    ; triggered once when stock drops below threshold
@@ -45,8 +50,8 @@ private const string DEFAULT_MONITOR_TAG    = "[MONITOR]";
 // Blink / light settings
 // -------------------------------------------------------------------------
 
-private const float BLINK_INTERVAL_SECONDS = 1.0f;
-private const float BLINK_LENGTH           = 0.5f;   // 0.0-1.0 fraction of cycle
+private const float BLINK_INTERVAL_SECONDS = 2.0f;
+private const float BLINK_LENGTH           = 50.0f;  // 0-100 percentage of cycle on
 private const float LIGHT_INTENSITY        = 5f;
 private const float LIGHT_RADIUS           = 5f;
 
@@ -72,11 +77,13 @@ private struct ItemRule
 
 private struct ContainerConfig
 {
-    public IMyCargoContainer Container;
+    public IMyTerminalBlock Container;
     public List<ItemRule>    Rules;
     public ActionType        Action;
     // light action fields
     public string            LightName;
+    public string            LightOkState;   // named state, e.g. "green" (optional)
+    public string            LightLowState;  // named state, e.g. "blinkorange" (optional)
     // timer action fields
     public string            TimerLowName;
     public string            TimerOkName;
@@ -95,10 +102,11 @@ private readonly Dictionary<long, bool> previousAlertState = new Dictionary<long
 // Cached lists — allocated once, reused every run
 // -------------------------------------------------------------------------
 
-private readonly List<IMyCargoContainer> containersBuffer = new List<IMyCargoContainer>();
+private readonly List<IMyTerminalBlock>  containersBuffer = new List<IMyTerminalBlock>();
 private readonly List<IMyTerminalBlock>  blocksBuffer     = new List<IMyTerminalBlock>();
 private readonly List<IMyInventory>      allInventories   = new List<IMyInventory>();
 private readonly List<ContainerConfig>   configs          = new List<ContainerConfig>();
+private readonly StringBuilder           screenBuffer     = new StringBuilder();
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -106,7 +114,72 @@ private readonly List<ContainerConfig>   configs          = new List<ContainerCo
 
 public Program()
 {
-    // Timer-block driven — no automatic Runtime.UpdateFrequency needed.
+    ShowBootScreen();
+}
+
+private void ShowBootScreen()
+{
+    var surface = Me.GetSurface(0);
+    surface.ContentType     = ContentType.TEXT_AND_IMAGE;
+    surface.Font            = "Monospace";
+    surface.FontSize        = 1.0f;
+    surface.Alignment       = TextAlignment.CENTER;
+    surface.BackgroundColor = new Color(0, 5, 15);
+    surface.FontColor       = new Color(0, 200, 160);
+    surface.WriteText(
+        "\n" +
+        "========================\n" +
+        "  INVENTORY MONITOR 2  \n" +
+        "========================\n" +
+        "\n" +
+        "   Initializing...\n"
+    );
+}
+
+private void ShowStatusScreen(int total, int lowCount)
+{
+    bool allOk = total > 0 && lowCount == 0;
+
+    var surface = Me.GetSurface(0);
+    surface.ContentType     = ContentType.TEXT_AND_IMAGE;
+    surface.Font            = "Monospace";
+    surface.FontSize        = 1.0f;
+    surface.Alignment       = TextAlignment.CENTER;
+    surface.BackgroundColor = new Color(0, 5, 15);
+    surface.FontColor       = allOk ? new Color(0, 200, 160) : new Color(255, 160, 0);
+
+    screenBuffer.Clear();
+    screenBuffer.Append("\n");
+    screenBuffer.Append("========================\n");
+    screenBuffer.Append("  INVENTORY MONITOR 2  \n");
+    screenBuffer.Append("========================\n");
+    screenBuffer.Append("\n");
+
+    if (total == 0)
+    {
+        screenBuffer.Append("  No tagged containers\n");
+        screenBuffer.Append("    found on grid.\n");
+    }
+    else if (allOk)
+    {
+        screenBuffer.Append("   ALL SYSTEMS OK\n");
+        screenBuffer.Append("\n");
+        screenBuffer.Append("  " + total + " container(s)\n");
+        screenBuffer.Append("  all stocked.\n");
+    }
+    else
+    {
+        screenBuffer.Append("   !! STOCK LOW !!\n");
+        screenBuffer.Append("\n");
+        screenBuffer.Append("  " + lowCount + " of " + total);
+        screenBuffer.Append(" container(s)\n");
+        screenBuffer.Append("  need restocking.\n");
+    }
+
+    screenBuffer.Append("\n");
+    screenBuffer.Append("========================\n");
+
+    surface.WriteText(screenBuffer.ToString());
 }
 
 // -------------------------------------------------------------------------
@@ -121,12 +194,15 @@ public void Main(string argument, UpdateType updateSource)
     if (configs.Count == 0)
     {
         Echo("No containers tagged " + monitorTag + " found.");
+        ShowStatusScreen(0, 0);
         return;
     }
 
     CollectInventories();
 
     Echo("InventoryMonitor2 — checking " + configs.Count + " container(s)...");
+
+    int lowCount = 0;
 
     foreach (var cfg in configs)
     {
@@ -147,12 +223,15 @@ public void Main(string argument, UpdateType updateSource)
         }
 
         bool isAlert = anyLow;
+        if (isAlert) lowCount++;
 
         if (cfg.Action == ActionType.Light)
             ExecuteLightAction(cfg, isAlert);
         else if (cfg.Action == ActionType.Timer)
             ExecuteTimerAction(cfg, isAlert);
     }
+
+    ShowStatusScreen(configs.Count, lowCount);
 }
 
 // -------------------------------------------------------------------------
@@ -194,6 +273,7 @@ private void ParseMonitoredContainers()
 
     GridTerminalSystem.GetBlocksOfType(containersBuffer, b =>
         b.IsSameConstructAs(Me) &&
+        b.HasInventory &&
         b.CustomName.Contains(monitorTag)
     );
 
@@ -216,7 +296,7 @@ private void ParseMonitoredContainers()
 // Parse one container's Custom Data
 // -------------------------------------------------------------------------
 
-private bool TryParseContainerConfig(IMyCargoContainer container, out ContainerConfig cfg)
+private bool TryParseContainerConfig(IMyTerminalBlock container, out ContainerConfig cfg)
 {
     cfg         = default(ContainerConfig);
     cfg.Rules   = new List<ItemRule>();
@@ -296,6 +376,12 @@ private bool TryParseContainerConfig(IMyCargoContainer container, out ContainerC
                 case "light_name":
                     cfg.LightName = value;
                     break;
+                case "light_ok":
+                    cfg.LightOkState = value;
+                    break;
+                case "light_low":
+                    cfg.LightLowState = value;
+                    break;
                 case "timer_low":
                     cfg.TimerLowName = value;
                     break;
@@ -332,7 +418,11 @@ private void ExecuteLightAction(ContainerConfig cfg, bool isAlert)
         return;
     }
 
-    ApplyLightState(light, !isAlert);
+    string state = isAlert ? cfg.LightLowState : cfg.LightOkState;
+    if (!string.IsNullOrEmpty(state))
+        ApplyNamedLightState(light, state);
+    else
+        ApplyLightState(light, !isAlert);
 }
 
 // -------------------------------------------------------------------------
@@ -401,10 +491,76 @@ private void ApplyLightState(IMyLightingBlock light, bool isOk)
 }
 
 // -------------------------------------------------------------------------
+// Apply a named light state (light_ok / light_low values)
+// Supported: green, orange, red, blinkorange, blinkgreen, blinkred, off
+// -------------------------------------------------------------------------
+
+private void ApplyNamedLightState(IMyLightingBlock light, string state)
+{
+    switch (state.ToLower())
+    {
+        case "green":
+            light.Enabled              = true;
+            light.Color                = COLOR_OK;
+            light.Intensity            = LIGHT_INTENSITY;
+            light.Radius               = LIGHT_RADIUS;
+            light.BlinkIntervalSeconds = 0f;
+            break;
+        case "orange":
+            light.Enabled              = true;
+            light.Color                = COLOR_ALERT;
+            light.Intensity            = LIGHT_INTENSITY;
+            light.Radius               = LIGHT_RADIUS;
+            light.BlinkIntervalSeconds = 0f;
+            break;
+        case "red":
+            light.Enabled              = true;
+            light.Color                = COLOR_ERROR;
+            light.Intensity            = LIGHT_INTENSITY;
+            light.Radius               = LIGHT_RADIUS;
+            light.BlinkIntervalSeconds = 0f;
+            break;
+        case "blinkorange":
+            light.Enabled              = true;
+            light.Color                = COLOR_ALERT;
+            light.Intensity            = LIGHT_INTENSITY;
+            light.Radius               = LIGHT_RADIUS;
+            light.BlinkIntervalSeconds = BLINK_INTERVAL_SECONDS;
+            light.BlinkLength          = BLINK_LENGTH;
+            light.BlinkOffset          = 0f;
+            break;
+        case "blinkgreen":
+            light.Enabled              = true;
+            light.Color                = COLOR_OK;
+            light.Intensity            = LIGHT_INTENSITY;
+            light.Radius               = LIGHT_RADIUS;
+            light.BlinkIntervalSeconds = BLINK_INTERVAL_SECONDS;
+            light.BlinkLength          = BLINK_LENGTH;
+            light.BlinkOffset          = 0f;
+            break;
+        case "blinkred":
+            light.Enabled              = true;
+            light.Color                = COLOR_ERROR;
+            light.Intensity            = LIGHT_INTENSITY;
+            light.Radius               = LIGHT_RADIUS;
+            light.BlinkIntervalSeconds = BLINK_INTERVAL_SECONDS;
+            light.BlinkLength          = BLINK_LENGTH;
+            light.BlinkOffset          = 0f;
+            break;
+        case "off":
+            light.Enabled = false;
+            break;
+        default:
+            Echo("WARNING: unknown light state '" + state + "'");
+            break;
+    }
+}
+
+// -------------------------------------------------------------------------
 // Apply ERROR state — called when container config is malformed
 // -------------------------------------------------------------------------
 
-private void TryApplyErrorStateByName(IMyCargoContainer container)
+private void TryApplyErrorStateByName(IMyTerminalBlock container)
 {
     string raw = container.CustomData;
     if (string.IsNullOrEmpty(raw))

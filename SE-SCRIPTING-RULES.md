@@ -228,7 +228,7 @@ Both `Main(string argument, UpdateType updateSource)` and `Main(string argument)
 | Property | Type | Range | Notes |
 |---|---|---|---|
 | `BlinkIntervalSeconds` | float | ≥ 0 | 0 = solid (no blink) |
-| `BlinkLength` | float | **0.0 – 1.0** | Fraction of cycle light is ON. **NOT a percentage.** 0.5 = 50 % |
+| `BlinkLength` | float | **0 – 100** | Percentage of cycle light is ON. 50 = 50 %. Despite what the API docs suggest, the in-game range is 0–100, not 0–1. |
 | `BlinkOffset` | float | 0.0 – 1.0 | Phase offset |
 | `Intensity` | float | 0 – 10 | |
 | `Radius` | float | 0 – 500 | |
