@@ -1,6 +1,6 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.3** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
+**Version 1.4** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
 
 A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a large LCD dispatch board.
 
@@ -18,7 +18,7 @@ One script, two roles. No extra files.
 
 ## Features
 
-- **One script** — mode set via Custom Data (`sender`, `receiver`, or `both`)
+- **One script** — mode set via Custom Data (`sender`, `receiver`, `both`, or `local`)
 - **Preprogrammed shortcodes** — type `HYDROGEN_LOW` and it broadcasts "Hydrogen tanks critically low"
 - **Freeform messages** — any text not matching a shortcode is sent as-is
 - **Antenna auto-management** — receiver keeps antenna on; sender turns it on to transmit and off again
@@ -64,6 +64,25 @@ One script, two roles. No extra files.
 6. The script runs automatically at ~1.67s intervals (`Update100`) and refreshes the LCD.
 
 > **Antenna:** The receiver's antenna must be on at all times. The script enables it automatically on startup and re-enables it if it is ever turned off.
+
+---
+
+## Setup — Local (single building, no antenna needed)
+
+Use `local` mode when you want a message board on one building without any intergrid networking. Other blocks on the same grid post messages by running the PB with an argument — there is no antenna, no channel, and no receiver elsewhere.
+
+1. Place a **Programmable Block** on the building.
+2. Paste the content of `Hermes.cs` into it.
+3. Open the PB's **Custom Data** and set:
+   ```
+   mode    = local
+   lcd_tag = [HERMES]
+   ```
+4. Click **Check Code**.
+5. Name one or more LCD panels on the same grid with the tag (e.g. `[HERMES] Status Board`).
+6. Wire your **Event Controller** → **Timer Block** → **Run** the PB with an argument (shortcode or freeform text).
+
+Messages posted via run arguments appear on the tagged LCDs immediately. Alert lights and sound blocks work the same way as in receiver mode. CLEAR commands work normally.
 
 ---
 
@@ -222,7 +241,7 @@ The number matches the `#N` shown on the dispatch board. After clearing, the boa
 ; HERMES Configuration
 ; Lines starting with ; are comments and are ignored.
 
-mode          = receiver    ; sender | receiver | both
+mode          = receiver    ; sender | receiver | both | local
 channel       = HERMES      ; Must match on all senders and the receiver
 lcd_tag       = [HERMES]    ; Any LCD/cockpit screen with this in its name shows the dispatch board
 lcd_surface   = 0           ; Surface index for cockpits/control stations (0 = first screen)
@@ -236,6 +255,7 @@ max_retries   = 0           ; Max retries before dropping (0 = retry forever)
 - `sender` — responds to run arguments only; no polling loop
 - `receiver` — polls IGC and updates the LCD; handles CLEAR commands
 - `both` — same PB acts as sender and receiver (e.g. a relay building)
+- `local` — no antenna or IGC at all; run arguments are posted directly to the on-grid LCD board; useful for a self-contained status board on one building
 
 ### `ack` — delivery confirmation (optional)
 

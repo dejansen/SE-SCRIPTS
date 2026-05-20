@@ -1,11 +1,11 @@
 // =====================================================================
-// HERMES — Intergrid Messaging Service  v1.0
+// HERMES — Intergrid Messaging Service  v1.4
 // =====================================================================
-// Single script for sender, receiver, or both roles.
+// Single script for sender, receiver, both, or local roles.
 // Configure via Custom Data on the Programmable Block.
 //
 // Quick-start Custom Data:
-//   mode    = receiver        ; sender | receiver | both
+//   mode    = receiver        ; sender | receiver | both | local
 //   channel = HERMES
 //   lcd_tag = [HERMES]
 // =====================================================================
@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.3";
+private const string VERSION         = "1.4";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -43,7 +43,7 @@ private readonly string[][] SHORTCODES = new string[][]
 // -------------------------------------------------------------------------
 // Types
 // -------------------------------------------------------------------------
-private enum ScriptMode { Sender, Receiver, Both }
+private enum ScriptMode { Sender, Receiver, Both, Local }
 
 private struct ReceivedMessage
 {
@@ -94,13 +94,15 @@ public Program()
 {
     LoadConfig();
     LoadFromStorage();
-    InitAntenna();
+
+    if (_mode != ScriptMode.Local)
+        InitAntenna();
 
     bool needsTick = (_mode != ScriptMode.Sender) || _ackEnabled;
     if (needsTick)
         Runtime.UpdateFrequency = UpdateFrequency.Update100;
 
-    if (_mode != ScriptMode.Sender)
+    if (_mode != ScriptMode.Sender && _mode != ScriptMode.Local)
     {
         _broadcastListener = IGC.RegisterBroadcastListener(_channel);
         _broadcastListener.SetMessageCallback();
@@ -179,7 +181,9 @@ public void Main(string argument, UpdateType updateSource)
     if (_mode != ScriptMode.Sender && TryHandleClear(arg))
         return;
 
-    if (_mode != ScriptMode.Receiver)
+    if (_mode == ScriptMode.Local)
+        InjectLocal(arg);
+    else if (_mode != ScriptMode.Receiver)
         Send(arg);
     else
         Echo("WARNING: mode = receiver. Cannot send. Set mode = sender or both.");
@@ -193,14 +197,17 @@ private void OnTick()
     if (_mode != ScriptMode.Sender)
     {
         int before = _messages.Count;
-        PollBroadcast();
+        if (_mode != ScriptMode.Local)
+        {
+            PollBroadcast();
+            EnsureAntennaOn();
+        }
         bool newArrived = _messages.Count > before;
-        EnsureAntennaOn();
         RefreshLcds();
         RefreshAlertBlocks(newArrived);
     }
 
-    if (_ackEnabled)
+    if (_ackEnabled && _mode != ScriptMode.Local)
     {
         PollAckListener();
         if (_mode != ScriptMode.Receiver)
@@ -242,6 +249,31 @@ private void Send(string text)
 
     Echo("Sent on " + targetChannel + ":");
     Echo("  " + gridName + " — " + message);
+}
+
+// =========================================================================
+// Local mode — inject message directly (no network)
+// =========================================================================
+private void InjectLocal(string text)
+{
+    string message  = ExpandShortcode(text);
+    string gridName = Me.CubeGrid.CustomName;
+
+    _messages.Insert(0, new ReceivedMessage
+    {
+        GridName  = gridName,
+        Text      = message,
+        Timestamp = DateTime.Now.ToString("HH:mm"),
+    });
+
+    while (_messages.Count > _maxMessages)
+        _messages.RemoveAt(_messages.Count - 1);
+
+    RefreshLcds();
+    RefreshAlertBlocks(true);
+    UpdatePbSurface();
+
+    Echo("Posted: " + gridName + " — " + message);
 }
 
 private string ExpandShortcode(string input)
@@ -404,9 +436,9 @@ private bool TryHandleClear(string argument)
     // Relay: re-broadcast all stored messages then clear the log
     if (upper == "FORWARD")
     {
-        if (_mode == ScriptMode.Receiver)
+        if (_mode == ScriptMode.Receiver || _mode == ScriptMode.Local)
         {
-            Echo("WARNING: mode = receiver. Cannot forward. Set mode = both.");
+            Echo("WARNING: FORWARD not available in " + ModeLabel() + " mode.");
             return true;
         }
 
@@ -543,22 +575,26 @@ private void UpdatePbSurface()
     _sb.AppendLine("      v" + VERSION);
     _sb.AppendLine(bar);
     _sb.AppendLine("Mode: " + ModeLabel());
-    _sb.AppendLine("Chan: " + _channel);
+    if (_mode != ScriptMode.Local)
+        _sb.AppendLine("Chan: " + _channel);
 
     if (_mode != ScriptMode.Sender)
         _sb.AppendLine("Msgs: " + _messages.Count + " / " + _maxMessages);
 
-    if (_ackEnabled)
+    if (_ackEnabled && _mode != ScriptMode.Local)
     {
         _sb.AppendLine(" ACK: ON");
         if (_queue.Count > 0)
             _sb.AppendLine("Que:  " + _queue.Count + " pending");
     }
 
-    if (_antenna != null)
-        _sb.Append(" Ant: " + (_antenna.Enabled ? "ON" : "OFF"));
-    else
-        _sb.Append(" Ant: none");
+    if (_mode != ScriptMode.Local)
+    {
+        if (_antenna != null)
+            _sb.Append(" Ant: " + (_antenna.Enabled ? "ON" : "OFF"));
+        else
+            _sb.Append(" Ant: none");
+    }
 
     surface.WriteText(_sb.ToString());
 }
@@ -569,6 +605,7 @@ private string ModeLabel()
     {
         case ScriptMode.Sender:   return "SENDER";
         case ScriptMode.Receiver: return "RECEIVER";
+        case ScriptMode.Local:    return "LOCAL";
         default:                  return "BOTH";
     }
 }
@@ -638,6 +675,7 @@ private void LoadConfig()
                     case "sender":   _mode = ScriptMode.Sender;   break;
                     case "receiver": _mode = ScriptMode.Receiver; break;
                     case "both":     _mode = ScriptMode.Both;     break;
+                    case "local":    _mode = ScriptMode.Local;    break;
                     default:
                         Echo("WARNING: Unknown mode '" + value
                             + "' — defaulting to receiver.");
