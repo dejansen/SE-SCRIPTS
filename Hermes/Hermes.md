@@ -1,6 +1,6 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.1** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
+**Version 1.3** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
 
 A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a large LCD dispatch board.
 
@@ -91,12 +91,14 @@ Multiple lights and sound blocks with the tag are all triggered simultaneously.
 
 ## Naming the Dispatch LCD
 
-The script finds LCDs by looking for your `lcd_tag` value anywhere in the block's name.
+The script finds any block with your `lcd_tag` value in its name that has an LCD surface — this includes standalone LCD panels, cockpits, control stations, and corner LCDs.
 
 **Rules:**
 - The tag is **case-sensitive**. `[HERMES]` and `[hermes]` are different.
-- The LCD must be on the **same construct** as the receiver PB (not a subgrid).
-- Multiple LCDs with the tag all show the same content.
+- The block must be on the **same construct** as the receiver PB (not a subgrid).
+- Multiple tagged blocks all show the same content.
+- For standalone LCD panels, surface index is always 0.
+- For cockpits and control stations, use `lcd_surface` to pick which screen (0-based).
 
 **Valid name examples** (default tag `[HERMES]`):
 ```
@@ -104,6 +106,7 @@ The script finds LCDs by looking for your `lcd_tag` value anywhere in the block'
 Main Screen [HERMES]
 [HERMES]
 Alerts [HERMES] Panel
+My Cockpit [HERMES]        ← cockpit, shows on the surface set by lcd_surface
 ```
 
 **Invalid** (wrong tag, wrong case):
@@ -112,6 +115,22 @@ Alerts [HERMES] Panel
 HERMES Board          ← no brackets, won't match
 [HERMES_BOARD]        ← extra characters inside brackets
 ```
+
+### Using a cockpit or control station LCD
+
+Cockpits and control stations expose multiple screens numbered from 0. To use one as the dispatch board:
+
+1. Add the `lcd_tag` to the cockpit's name, e.g. `Fighter Cockpit [HERMES]`.
+2. Set `lcd_surface` in Custom Data to the screen number you want (check in-game — surface 0 is usually the center screen).
+
+```
+mode        = receiver
+channel     = HERMES
+lcd_tag     = [HERMES]
+lcd_surface = 1        ; second screen on the cockpit
+```
+
+If `lcd_surface` is out of range for a given block, that block is silently skipped.
 
 ---
 
@@ -205,7 +224,8 @@ The number matches the `#N` shown on the dispatch board. After clearing, the boa
 
 mode          = receiver    ; sender | receiver | both
 channel       = HERMES      ; Must match on all senders and the receiver
-lcd_tag       = [HERMES]    ; Any LCD with this in its name shows the dispatch board
+lcd_tag       = [HERMES]    ; Any LCD/cockpit screen with this in its name shows the dispatch board
+lcd_surface   = 0           ; Surface index for cockpits/control stations (0 = first screen)
 max_messages  = 20          ; How many alerts to keep (oldest are dropped)
 ack           = false       ; true = enable delivery confirmation + retry queue
 retry_seconds = 30          ; Seconds between retransmission attempts (ack mode only)
@@ -279,8 +299,9 @@ Msgs: 3 / 20
 
 | Symptom | Likely cause |
 |---|---|
-| LCD shows nothing | LCD name doesn't contain the `lcd_tag` value (check case and brackets) |
-| LCD on wrong construct | LCD is on a subgrid — move it to the same grid as the receiver PB |
+| LCD shows nothing | Block name doesn't contain the `lcd_tag` value (check case and brackets) |
+| Cockpit screen stays blank | `lcd_surface` index is out of range — check how many screens the cockpit has |
+| LCD on wrong construct | Block is on a subgrid — move it to the same grid as the receiver PB |
 | Sender Echo shows "Cannot send" | PB `mode` is set to `receiver` — change to `sender` or `both` |
 | Messages not arriving | Sender and receiver `channel` values don't match exactly |
 | Antenna warning on receiver | Enable an antenna on the control building; the script will keep it on |

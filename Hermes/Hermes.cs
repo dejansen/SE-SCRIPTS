@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.2";
+private const string VERSION         = "1.3";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -66,6 +66,7 @@ private struct QueuedMessage
 private ScriptMode _mode         = ScriptMode.Receiver;
 private string     _channel      = DEFAULT_CHANNEL;
 private string     _lcdTag       = DEFAULT_LCD_TAG;
+private int        _lcdSurface   = 0;
 private int        _maxMessages  = DEFAULT_MAX_MESSAGES;
 private bool       _ackEnabled   = false;
 private int        _retrySeconds = DEFAULT_RETRY_SECONDS;
@@ -78,7 +79,7 @@ private IMyRadioAntenna      _antenna;
 private IMyBroadcastListener _broadcastListener;
 private bool                 _pendingAntennaOff = false;
 
-private readonly List<IMyTextPanel>      _lcdBuffer     = new List<IMyTextPanel>();
+private readonly List<IMyTerminalBlock>  _lcdBuffer     = new List<IMyTerminalBlock>();
 private readonly List<IMyLightingBlock>  _alertLights   = new List<IMyLightingBlock>();
 private readonly List<IMySoundBlock>     _alertSounds   = new List<IMySoundBlock>();
 private readonly List<IMyRadioAntenna>   _antennaBuffer = new List<IMyRadioAntenna>();
@@ -446,17 +447,24 @@ private bool TryHandleClear(string argument)
 private void RefreshLcds()
 {
     _lcdBuffer.Clear();
-    GridTerminalSystem.GetBlocksOfType<IMyTextPanel>(_lcdBuffer, b =>
-        b.IsSameConstructAs(Me) && b.CustomName.Contains(_lcdTag));
+    GridTerminalSystem.GetBlocksOfType<IMyTerminalBlock>(_lcdBuffer, b =>
+        b.IsSameConstructAs(Me)
+        && b.CustomName.Contains(_lcdTag)
+        && b is IMyTextSurfaceProvider);
 
     if (_lcdBuffer.Count == 0) return;
 
     string content = BuildDispatchContent();
-    foreach (var lcd in _lcdBuffer)
+    foreach (var block in _lcdBuffer)
     {
-        lcd.ContentType = ContentType.TEXT_AND_IMAGE;
-        lcd.Font        = "Monospace";
-        lcd.WriteText(content);
+        var provider = (IMyTextSurfaceProvider)block;
+        int idx = (block is IMyTextPanel) ? 0 : _lcdSurface;
+        if (idx >= provider.SurfaceCount) continue;
+
+        var surface = provider.GetSurface(idx);
+        surface.ContentType = ContentType.TEXT_AND_IMAGE;
+        surface.Font        = "Monospace";
+        surface.WriteText(content);
     }
 }
 
@@ -641,6 +649,11 @@ private void LoadConfig()
                 break;
             case "lcd_tag":
                 if (!string.IsNullOrEmpty(value)) _lcdTag = value;
+                break;
+            case "lcd_surface":
+                int surf;
+                if (int.TryParse(value, out surf) && surf >= 0)
+                    _lcdSurface = surf;
                 break;
             case "max_messages":
                 int maxMsgs;
