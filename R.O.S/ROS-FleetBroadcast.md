@@ -2,14 +2,14 @@
 
 **Module:** Miner Telemetry Broadcast  
 **Author:** RevGamer (Simba "Davy" Jones)  
-**Version:** 1.1  
+**Version:** 1.3  
 **Language:** C# — Space Engineers Programmable Block
 
 ---
 
 ## Overview
 
-R.O.S Fleet Broadcast is the miner-side companion script for [R.O.S — Rev Operating System](../ROS-DockingMonitor/ROS-DockingMonitor.md). Install it on the Programmable Block of any mining ship. It broadcasts live telemetry over IGC to the base station, drives a proper status display on the PB screen, and optionally enforces an approach speed limit when near the base.
+R.O.S Fleet Broadcast is the miner-side companion script for [R.O.S — Rev Operating System](../ROS-DockingMonitor/ROS-Main.md). Install it on the Programmable Block of any mining ship. It broadcasts live telemetry over IGC to the base station, drives a proper status display on the PB screen, and optionally enforces an approach speed limit when near the base.
 
 ---
 
@@ -17,11 +17,15 @@ R.O.S Fleet Broadcast is the miner-side companion script for [R.O.S — Rev Oper
 
 - Broadcasts speed, position, drill state, cargo %, battery %, fuel % and status over IGC
 - Status auto-detection: **PARKED** (on terrain or stationary in space), **IDLE** (airborne hover), **MINING** (drills active), **TRANSIT** (moving)
-- Auto approach speed limit — slows to 15 m/s within 300m of base (requires Remote Control block)
+- Auto approach speed limit — slows to 15 m/s within 300m of base (requires Remote Control block); restores your original speed limit when leaving approach range, not a hardcoded 100 m/s
+- Living display shimmer — PB status screen sprites pulse gently for an active feel
+- Uptime timer in PB display header
+- Smart distance formatting — `23m`, `1.2km`, `4.5km` instead of raw numbers
 - Boot screen on PB display with progress bar and random mining quotes
 - Live status screen after boot showing all telemetry with colour-coded bars
 - Error screen if antenna is missing or offline
 - `InvariantCulture` formatting — works on all server locales
+- Block list caching — cargo containers, H2 tanks, batteries, drills rescanned every ~10 seconds
 
 ---
 
@@ -29,7 +33,7 @@ R.O.S Fleet Broadcast is the miner-side companion script for [R.O.S — Rev Oper
 
 | File | Description |
 |------|-------------|
-| `MinerBroadcast.cs` | Paste into the miner Programmable Block |
+| `ROS_FleetBroadcast_v1.3.cs` | Paste into the miner Programmable Block |
 
 ---
 
@@ -43,16 +47,16 @@ R.O.S Fleet Broadcast is the miner-side companion script for [R.O.S — Rev Oper
 | Battery Blocks | No | Battery % telemetry |
 | Hydrogen Tanks | No | Fuel % telemetry (hidden if absent) |
 | Ship Drills | No | Drill state detection |
-| Cargo Containers | No | Cargo fill % (scans all inventory blocks) |
+| Cargo Containers | No | Cargo fill % (cargo containers only — see Notes) |
 
 ---
 
 ## Setup
 
 1. Build a **Radio Antenna** on the miner. Enable it and turn on **Broadcasting**.
-2. Paste `MinerBroadcast.cs` into the miner's **Programmable Block** and compile.
+2. Paste `ROS_FleetBroadcast_v1.3.cs` into the miner's **Programmable Block** and compile.
 3. The script runs automatically on `Update10`. No CustomData configuration needed.
-4. Ensure [R.O.S — Rev Operating System](../ROS-DockingMonitor/ROS-DockingMonitor.md) is running on the base station.
+4. Ensure [R.O.S — Rev Operating System](../ROS-DockingMonitor/ROS-Main.md) is running on the base station.
 
 > **Antenna range:** The antenna must have enough range to reach the base station. The script checks `_antenna.Enabled && _antenna.IsBroadcasting` every tick and shows an error screen if either is false.
 
@@ -65,15 +69,15 @@ R.O.S Fleet Broadcast is the miner-side companion script for [R.O.S — Rev Oper
 On script load, the PB display shows an animated boot sequence for approximately 3 seconds:
 
 ```
-         R.O.S
-     FLEET BROADCAST
-          v1.1
-  ─────────────────────
+           R.O.S
+       FLEET BROADCAST
+            v1.3
+  ──────────────────────────
   RevGamer (Simba "Davy" Jones)
 
   Syncing with base station...
   ████████████████░░░░░░  80%
-          ◌
+             ◌
 ```
 
 Random quotes cycle during boot:
@@ -88,12 +92,13 @@ Random quotes cycle during boot:
 
 ### Status Screen
 
-After boot, the PB display shows live telemetry updated every tick:
+After boot, the PB display shows live telemetry updated every tick. All sprites have a gentle shimmer pulse. The uptime timer in the header confirms the script is running even when nothing is changing.
 
 ```
-R.O.S                              v1.1  ◌
+R.O.S                              v1.3  ◌
   FLEET BROADCAST
   RevGamer (Simba "Davy" Jones)
+  UP 4:32
 ─────────────────────────────────────────
 RGH GroundHog
 
@@ -106,12 +111,12 @@ CARGO                              77%
 BATTERY                            85%
 █████████████████████████░░░░░░░░░░░░
 ─────────────────────────────────────────
-BASE                               23m
+BASE                             1.2km
 ```
 
 When approach mode is active:
 ```
-BASE                               15m
+BASE                              280m
 >> APPROACH MODE 15m/s <<
 ```
 
@@ -120,8 +125,8 @@ BASE                               15m
 If the antenna is missing or offline:
 
 ```
-         ⚠
-    Antenna offline
+          ⚠
+     Antenna offline
   Enable antenna and set
     broadcasting ON
 ```
@@ -130,7 +135,7 @@ If the antenna is missing or offline:
 
 ## IGC Broadcast Format
 
-The script broadcasts on channel `DOCK_APPROACH` every `Update10` tick. The message is a pipe-separated string:
+The script broadcasts on channel `DOCK_APPROACH` every `Update10` tick. The message is a pipe-separated string with all floats formatted using `InvariantCulture`:
 
 ```
 [GridName]|[Speed]|[PosX]|[PosY]|[PosZ]|[Drilling]|[Cargo%]|[Fuel%]|[Battery%]|[Status]
@@ -169,7 +174,9 @@ The base station replies on `DOCK_REPLY` with `[GridName]|[DistanceMetres]`.
 If a **Remote Control** block is present and the base station is replying with distance:
 
 - Within **300m** of base → speed limit set to **15 m/s**
-- Beyond **300m** → speed limit reset to **100 m/s**
+- Beyond **300m** → speed limit restored to whatever it was **before** approach mode activated
+
+> In v1.2 and earlier, speed was reset to a hardcoded 100 m/s. v1.3 captures `_remote.SpeedLimit` before changing it and restores that value, preserving any custom limit you had set.
 
 The PB display shows `>> APPROACH MODE 15m/s <<` in red when active.
 
@@ -184,18 +191,37 @@ const float  APPROACH_SPD  = 15.0f;  // m/s
 
 ## Cargo Scanning
 
-Cargo fill is calculated by scanning all inventory blocks on the same construct, excluding:
-- Ship Controllers (cockpits, remote controls)
-- Ship Tool Bases (drills, welders, grinders)
+Cargo fill is calculated from **cargo containers only** (`IMyCargoContainer`). Refineries, assemblers, drills, and other blocks with inventories are excluded.
 
-This gives an accurate reading of the actual cargo containers and storage.
+> In v1.1 and earlier, all inventory blocks were scanned, which gave a misleading cargo reading (refineries and assemblers inflated or deflated the number). v1.2 changed this to cargo containers only for an accurate payload reading.
+
+---
+
+## Notes
+
+- The script runs at `UpdateFrequency.Update10` — every 10 game ticks.
+- Block lists (cargo containers, H2 tanks, batteries, drills) are rescanned every 100 ticks (~10 seconds). Adding or removing blocks takes effect within ~10 seconds without recompiling.
+- If no Remote Control block is present, approach speed limiting is silently skipped. Telemetry still broadcasts normally.
+- The fuel bar is hidden entirely when no hydrogen tanks are detected — no blank bar appears.
+- The battery bar is hidden when no batteries are detected.
 
 ---
 
 ## Changelog
 
+### v1.3
+- **Living display shimmer** — `SaltColor()` applies a gentle alpha pulse to all sprites on the PB status screen
+- **FC() distance formatter** — base distance now displays as `1.2km` instead of `1234m`
+- **Uptime timer** — `FormatElapsed()` shows script runtime in PB status screen header and Echo output (`UP 4:32`)
+
+### v1.2
+- **Block list caching** — `_drills`, `_cargoCont`, `_h2Tanks`, `_batteries` now rebuilt every `SCAN_INTERVAL = 100` ticks, not every tick. Eliminates `GetBlocksOfType` allocations on every frame
+- **Cargo containers only** — `GetCargoFill()` now scans `IMyCargoContainer` blocks only, not all blocks with inventory. Gives accurate miner payload reading
+- **Speed limit restore** — approach mode now restores `_originalSpeedLimit` (captured before changing) instead of hardcoded 100 m/s
+- **Drills list cached** — drill enabled check now uses cached `_drills` list
+
 ### v1.1
-- Boot screen on PB display with animated progress bar and random quotes
+- Boot screen on PB display with animated progress bar and random mining quotes
 - Live status screen with colour-coded CARGO / BATTERY / FUEL bars
 - Error screen when antenna is missing or offline
 - `InvariantCulture` on all `ToString("F0")` — broadcast numbers consistent across locales
