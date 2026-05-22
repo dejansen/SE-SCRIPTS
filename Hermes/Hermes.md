@@ -297,9 +297,13 @@ Carousel is useful when you want a large, readable display for a single alert ra
 **Carousel layout** (`lcd_mode = carousel`):
 
 ```
-══════════════════════════════════════════════════
+──────────────────────────────────────────────────
+
+
  Hydrogen tanks critically low
-══════════════════════════════════════════════════
+
+
+──────────────────────────────────────────────────
  Hydro Plant  •  1/3  •  14:32
 ```
 

@@ -591,33 +591,40 @@ private string BuildDispatchContent(IMyTextSurface surface)
 
 private string BuildCarouselContent(IMyTextSurface surface)
 {
-    int    width = EstimateCharsPerLine(surface);
-    string bar   = new string('═', width);
+    int    width      = EstimateCharsPerLine(surface);
+    int    totalLines = EstimateLinesPerScreen(surface);
+    string bar        = new string('─', width);
 
     if (_carouselIndex >= _messages.Count)
         _carouselIndex = 0;
 
     _sb.Clear();
-    _sb.AppendLine(bar);
 
     if (_messages.Count == 0)
-    {
-        _sb.AppendLine("  No alerts — all clear.");
-    }
-    else
-    {
-        var    m       = _messages[_carouselIndex];
-        string counter = (_carouselIndex + 1) + "/" + _messages.Count;
-        string suffix  = "  •  " + counter + "  •  " + m.Timestamp;
-        int    nameMax = width - 1 - suffix.Length;
-        string name    = nameMax > 0
-            ? m.GridName.Substring(0, Math.Min(m.GridName.Length, nameMax))
-            : "";
+        return "";
 
-        AppendWrapped(" ", m.Text, width);
-        _sb.AppendLine(bar);
-        _sb.AppendLine(" " + name + suffix);
-    }
+    var    m       = _messages[_carouselIndex];
+    string counter = (_carouselIndex + 1) + "/" + _messages.Count;
+    string suffix  = "  •  " + counter + "  •  " + m.Timestamp;
+    int    nameMax = width - 1 - suffix.Length;
+    string name    = nameMax > 0
+        ? m.GridName.Substring(0, Math.Min(m.GridName.Length, nameMax))
+        : "";
+
+    int msgLines    = CountWrappedLines(" ", m.Text, width);
+    int blockLines  = 1 + 2 + msgLines + 2 + 1;   // bar + 2×blank + msg + 2×blank + bar
+    int available   = totalLines - 1;               // last line reserved for status
+    int topPad2     = Math.Max(0, (available - blockLines) / 2);
+    int bottomPad   = Math.Max(0, available - blockLines - topPad2);
+
+    for (int i = 0; i < topPad2; i++)  _sb.AppendLine("");
+    _sb.AppendLine(bar);
+    _sb.AppendLine(""); _sb.AppendLine("");
+    AppendWrapped(" ", m.Text, width);
+    _sb.AppendLine(""); _sb.AppendLine("");
+    _sb.AppendLine(bar);
+    for (int i = 0; i < bottomPad; i++) _sb.AppendLine("");
+    _sb.AppendLine(" " + name + suffix);
 
     return _sb.ToString();
 }
@@ -629,6 +636,45 @@ private int EstimateCharsPerLine(IMyTextSurface surface)
     float charW = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).X;
     if (charW <= 0f) return 50;
     return Math.Max(10, (int)(surface.SurfaceSize.X / charW));
+}
+
+private int EstimateLinesPerScreen(IMyTextSurface surface)
+{
+    _sb.Clear();
+    _sb.Append('W');
+    float charH = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).Y;
+    if (charH <= 0f) return 20;
+    // SE's line spacing is slightly larger than the character height — subtract 1 to stay on screen
+    return Math.Max(3, (int)(surface.SurfaceSize.Y / charH) - 1);
+}
+
+private int CountWrappedLines(string prefix, string text, int lineWidth)
+{
+    int availFirst = lineWidth - prefix.Length;
+    if (text.Length == 0) return 1;
+
+    string continuation = new string(' ', prefix.Length);
+    int    lines   = 0;
+    bool   isFirst = true;
+    string cur     = "";
+
+    foreach (string word in text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+    {
+        int avail = isFirst ? availFirst : (lineWidth - continuation.Length);
+        if (cur.Length == 0)
+            cur = word;
+        else if (cur.Length + 1 + word.Length <= avail)
+            cur += " " + word;
+        else
+        {
+            lines++;
+            isFirst = false;
+            cur     = word;
+        }
+    }
+    if (cur.Length > 0) lines++;
+
+    return lines;
 }
 
 private void AppendWrapped(string prefix, string text, int lineWidth)
