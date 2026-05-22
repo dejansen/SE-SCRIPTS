@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.7";
+private const string VERSION         = "1.8";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -586,7 +586,6 @@ private string BuildDispatchContent(IMyTextSurface surface)
     }
 
     _sb.AppendLine(bar);
-    AppendWrapped(" ", "Run with CLEAR or CLEAR N to dismiss", width);
     return _sb.ToString();
 }
 
@@ -595,32 +594,29 @@ private string BuildCarouselContent(IMyTextSurface surface)
     int    width = EstimateCharsPerLine(surface);
     string bar   = new string('═', width);
 
-    // Clamp index in case messages were removed by a CLEAR outside OnTick
     if (_carouselIndex >= _messages.Count)
         _carouselIndex = 0;
 
     _sb.Clear();
-    _sb.AppendLine(" HERMES DISPATCH");
-    _sb.AppendLine(" " + DateTime.Now.ToString("yyyy-MM-dd  HH:mm"));
     _sb.AppendLine(bar);
 
     if (_messages.Count == 0)
     {
         _sb.AppendLine("  No alerts — all clear.");
-        _sb.AppendLine(bar);
     }
     else
     {
-        var    m         = _messages[_carouselIndex];
-        string indicator = " " + (_carouselIndex + 1) + " / " + _messages.Count
-            + "   [" + m.Timestamp + "]";
-        _sb.AppendLine(indicator);
-        _sb.AppendLine(bar);
-        AppendWrapped(" ", m.GridName, width);
-        _sb.AppendLine(bar);
+        var    m       = _messages[_carouselIndex];
+        string counter = (_carouselIndex + 1) + "/" + _messages.Count;
+        string suffix  = "  •  " + counter + "  •  " + m.Timestamp;
+        int    nameMax = width - 1 - suffix.Length;
+        string name    = nameMax > 0
+            ? m.GridName.Substring(0, Math.Min(m.GridName.Length, nameMax))
+            : "";
+
         AppendWrapped(" ", m.Text, width);
         _sb.AppendLine(bar);
-        AppendWrapped(" ", "CLEAR or CLEAR " + (_carouselIndex + 1) + " to dismiss", width);
+        _sb.AppendLine(" " + name + suffix);
     }
 
     return _sb.ToString();

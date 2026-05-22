@@ -1,6 +1,6 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.7** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
+**Version 1.8** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
 
 A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a large LCD dispatch board.
 
@@ -292,22 +292,15 @@ Carousel is useful when you want a large, readable display for a single alert ra
  # 2  [14:15]  Power Station    Battery power critically low
  # 3  [09:44]  Refinery         Ice supply low
 ══════════════════════════════════════════════════
- Run with CLEAR or CLEAR N to dismiss
 ```
 
 **Carousel layout** (`lcd_mode = carousel`):
 
 ```
- HERMES DISPATCH
- 2026-05-22  14:32
-══════════════════════════════════════════════════
- 1 / 3   [14:32]
-══════════════════════════════════════════════════
- Hydro Plant
 ══════════════════════════════════════════════════
  Hydrogen tanks critically low
 ══════════════════════════════════════════════════
- CLEAR or CLEAR 1 to dismiss
+ Hydro Plant  •  1/3  •  14:32
 ```
 
 Set the LCD to **Monospace** font for proper column alignment. The script sets `ContentType = TEXT_AND_IMAGE` automatically; it does not change your font size setting.
