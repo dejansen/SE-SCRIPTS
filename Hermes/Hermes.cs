@@ -13,13 +13,14 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.6";
+private const string VERSION         = "1.8";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
-private const int    DEFAULT_MAX_MESSAGES   = 20;
-private const int    DEFAULT_RETRY_SECONDS  = 30;
-private const int    DEFAULT_MAX_RETRIES    = 0;
+private const int    DEFAULT_MAX_MESSAGES      = 20;
+private const int    DEFAULT_RETRY_SECONDS     = 30;
+private const int    DEFAULT_MAX_RETRIES       = 0;
+private const int    DEFAULT_CAROUSEL_SECONDS  = 5;
 
 // -------------------------------------------------------------------------
 // Alert shortcode table
@@ -63,14 +64,16 @@ private struct QueuedMessage
 // -------------------------------------------------------------------------
 // Configuration
 // -------------------------------------------------------------------------
-private ScriptMode _mode         = ScriptMode.Receiver;
-private string     _channel      = DEFAULT_CHANNEL;
-private string     _lcdTag       = DEFAULT_LCD_TAG;
-private int        _lcdSurface   = 0;
-private int        _maxMessages  = DEFAULT_MAX_MESSAGES;
-private bool       _ackEnabled   = false;
-private int        _retrySeconds = DEFAULT_RETRY_SECONDS;
-private int        _maxRetries   = DEFAULT_MAX_RETRIES;
+private ScriptMode _mode             = ScriptMode.Receiver;
+private string     _channel          = DEFAULT_CHANNEL;
+private string     _lcdTag           = DEFAULT_LCD_TAG;
+private int        _lcdSurface       = 0;
+private int        _maxMessages      = DEFAULT_MAX_MESSAGES;
+private bool       _ackEnabled       = false;
+private int        _retrySeconds     = DEFAULT_RETRY_SECONDS;
+private int        _maxRetries       = DEFAULT_MAX_RETRIES;
+private bool       _carouselMode     = false;
+private int        _carouselSeconds  = DEFAULT_CAROUSEL_SECONDS;
 
 // -------------------------------------------------------------------------
 // Runtime state
@@ -86,6 +89,9 @@ private readonly List<IMyRadioAntenna>   _antennaBuffer = new List<IMyRadioAnten
 private readonly List<ReceivedMessage>   _messages      = new List<ReceivedMessage>();
 private readonly List<QueuedMessage>     _queue         = new List<QueuedMessage>();
 private readonly StringBuilder           _sb            = new StringBuilder();
+
+private int  _carouselIndex      = 0;
+private long _carouselLastChange = 0;
 
 // =========================================================================
 // Constructor
@@ -162,8 +168,8 @@ public void Main(string argument, UpdateType updateSource)
         return;
     }
 
-    // Update1 only fires for the deferred antenna shutdown — nothing else to do
-    if ((updateSource & UpdateType.Update1) != 0)
+    // Update10 only fires for the deferred antenna shutdown — nothing else to do
+    if ((updateSource & UpdateType.Update10) != 0)
         return;
 
     // Manual trigger (terminal, toolbar, Event Controller → Timer Block)
@@ -203,6 +209,7 @@ private void OnTick()
             EnsureAntennaOn();
         }
         bool newArrived = _messages.Count > before;
+        if (_carouselMode) AdvanceCarousel(newArrived);
         RefreshLcds();
         RefreshAlertBlocks(newArrived);
     }
@@ -215,6 +222,37 @@ private void OnTick()
     }
 
     UpdatePbSurface();
+}
+
+// =========================================================================
+// Carousel
+// =========================================================================
+private void AdvanceCarousel(bool newArrived)
+{
+    if (_messages.Count == 0) { _carouselIndex = 0; return; }
+
+    if (newArrived)
+    {
+        _carouselIndex      = 0;
+        _carouselLastChange = DateTime.Now.Ticks;
+        return;
+    }
+
+    // Clamp in case messages were cleared outside OnTick
+    if (_carouselIndex >= _messages.Count)
+        _carouselIndex = 0;
+
+    if (_messages.Count == 1) return;
+
+    // Initialise timer on first tick so we don't advance immediately
+    if (_carouselLastChange == 0) { _carouselLastChange = DateTime.Now.Ticks; return; }
+
+    long interval = (long)_carouselSeconds * TimeSpan.TicksPerSecond;
+    if (DateTime.Now.Ticks - _carouselLastChange >= interval)
+    {
+        _carouselIndex      = (_carouselIndex + 1) % _messages.Count;
+        _carouselLastChange = DateTime.Now.Ticks;
+    }
 }
 
 // =========================================================================
@@ -269,6 +307,7 @@ private void InjectLocal(string text)
     while (_messages.Count > _maxMessages)
         _messages.RemoveAt(_messages.Count - 1);
 
+    if (_carouselMode) { _carouselIndex = 0; _carouselLastChange = DateTime.Now.Ticks; }
     RefreshLcds();
     RefreshAlertBlocks(true);
     UpdatePbSurface();
@@ -294,9 +333,10 @@ private void Transmit(string channel, string payload)
     {
         _antenna.Enabled   = true;
         _pendingAntennaOff = true;
-        // Request one more tick so the antenna is on when SE dispatches the broadcast
+        // Keep antenna on for ~160ms (10 ticks); on multiplayer servers the broadcast
+        // is queued and dispatched after Main() returns, so one tick is not enough.
         if (Runtime.UpdateFrequency == UpdateFrequency.None)
-            Runtime.UpdateFrequency = UpdateFrequency.Update1;
+            Runtime.UpdateFrequency = UpdateFrequency.Update10;
     }
 
     IGC.SendBroadcastMessage(channel, payload, TransmissionDistance.TransmissionDistanceMax);
@@ -495,7 +535,9 @@ private void RefreshLcds()
         var surface = provider.GetSurface(idx);
         surface.ContentType = ContentType.TEXT_AND_IMAGE;
         surface.Font        = "Monospace";
-        surface.WriteText(BuildDispatchContent(surface));
+        surface.WriteText(_carouselMode
+            ? BuildCarouselContent(surface)
+            : BuildDispatchContent(surface));
     }
 }
 
@@ -544,7 +586,46 @@ private string BuildDispatchContent(IMyTextSurface surface)
     }
 
     _sb.AppendLine(bar);
-    AppendWrapped(" ", "Run with CLEAR or CLEAR N to dismiss", width);
+    return _sb.ToString();
+}
+
+private string BuildCarouselContent(IMyTextSurface surface)
+{
+    int    width      = EstimateCharsPerLine(surface);
+    int    totalLines = EstimateLinesPerScreen(surface);
+    string bar        = new string('─', width);
+
+    if (_carouselIndex >= _messages.Count)
+        _carouselIndex = 0;
+
+    _sb.Clear();
+
+    if (_messages.Count == 0)
+        return "";
+
+    var    m       = _messages[_carouselIndex];
+    string counter = (_carouselIndex + 1) + "/" + _messages.Count;
+    string suffix  = "  •  " + counter + "  •  " + m.Timestamp;
+    int    nameMax = width - 1 - suffix.Length;
+    string name    = nameMax > 0
+        ? m.GridName.Substring(0, Math.Min(m.GridName.Length, nameMax))
+        : "";
+
+    int msgLines    = CountWrappedLines(" ", m.Text, width);
+    int blockLines  = 1 + 2 + msgLines + 2 + 1;   // bar + 2×blank + msg + 2×blank + bar
+    int available   = totalLines - 1;               // last line reserved for status
+    int topPad2     = Math.Max(0, (available - blockLines) / 2);
+    int bottomPad   = Math.Max(0, available - blockLines - topPad2);
+
+    for (int i = 0; i < topPad2; i++)  _sb.AppendLine("");
+    _sb.AppendLine(bar);
+    _sb.AppendLine(""); _sb.AppendLine("");
+    AppendWrapped(" ", m.Text, width);
+    _sb.AppendLine(""); _sb.AppendLine("");
+    _sb.AppendLine(bar);
+    for (int i = 0; i < bottomPad; i++) _sb.AppendLine("");
+    _sb.AppendLine(" " + name + suffix);
+
     return _sb.ToString();
 }
 
@@ -555,6 +636,45 @@ private int EstimateCharsPerLine(IMyTextSurface surface)
     float charW = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).X;
     if (charW <= 0f) return 50;
     return Math.Max(10, (int)(surface.SurfaceSize.X / charW));
+}
+
+private int EstimateLinesPerScreen(IMyTextSurface surface)
+{
+    _sb.Clear();
+    _sb.Append('W');
+    float charH = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).Y;
+    if (charH <= 0f) return 20;
+    // SE's line spacing is slightly larger than the character height — subtract 1 to stay on screen
+    return Math.Max(3, (int)(surface.SurfaceSize.Y / charH) - 1);
+}
+
+private int CountWrappedLines(string prefix, string text, int lineWidth)
+{
+    int availFirst = lineWidth - prefix.Length;
+    if (text.Length == 0) return 1;
+
+    string continuation = new string(' ', prefix.Length);
+    int    lines   = 0;
+    bool   isFirst = true;
+    string cur     = "";
+
+    foreach (string word in text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+    {
+        int avail = isFirst ? availFirst : (lineWidth - continuation.Length);
+        if (cur.Length == 0)
+            cur = word;
+        else if (cur.Length + 1 + word.Length <= avail)
+            cur += " " + word;
+        else
+        {
+            lines++;
+            isFirst = false;
+            cur     = word;
+        }
+    }
+    if (cur.Length > 0) lines++;
+
+    return lines;
 }
 
 private void AppendWrapped(string prefix, string text, int lineWidth)
@@ -776,6 +896,17 @@ private void LoadConfig()
                 int maxR;
                 if (int.TryParse(value, out maxR) && maxR >= 0)
                     _maxRetries = maxR;
+                break;
+            case "lcd_mode":
+            {
+                string lm = value.ToLowerInvariant();
+                _carouselMode = lm == "carousel";
+                break;
+            }
+            case "lcd_carousel_seconds":
+                int cs;
+                if (int.TryParse(value, out cs) && cs > 0)
+                    _carouselSeconds = cs;
                 break;
         }
     }

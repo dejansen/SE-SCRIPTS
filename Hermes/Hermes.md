@@ -1,6 +1,6 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.6** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
+**Version 1.8** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
 
 A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a large LCD dispatch board.
 
@@ -241,14 +241,16 @@ The number matches the `#N` shown on the dispatch board. After clearing, the boa
 ; HERMES Configuration
 ; Lines starting with ; are comments and are ignored.
 
-mode          = receiver    ; sender | receiver | both | local
-channel       = HERMES      ; Must match on all senders and the receiver
-lcd_tag       = [HERMES]    ; Any LCD/cockpit screen with this in its name shows the dispatch board
-lcd_surface   = 0           ; Surface index for cockpits/control stations (0 = first screen)
-max_messages  = 20          ; How many alerts to keep (oldest are dropped)
-ack           = false       ; true = enable delivery confirmation + retry queue
-retry_seconds = 30          ; Seconds between retransmission attempts (ack mode only)
-max_retries   = 0           ; Max retries before dropping (0 = retry forever)
+mode                 = receiver    ; sender | receiver | both | local
+channel              = HERMES      ; Must match on all senders and the receiver
+lcd_tag              = [HERMES]    ; Any LCD/cockpit screen with this in its name shows the dispatch board
+lcd_surface          = 0           ; Surface index for cockpits/control stations (0 = first screen)
+lcd_mode             = list        ; list = all messages at once | carousel = one at a time, cycling
+lcd_carousel_seconds = 5           ; Seconds each message is shown before advancing (carousel only)
+max_messages         = 20          ; How many alerts to keep (oldest are dropped)
+ack                  = false       ; true = enable delivery confirmation + retry queue
+retry_seconds        = 30          ; Seconds between retransmission attempts (ack mode only)
+max_retries          = 0           ; Max retries before dropping (0 = retry forever)
 ```
 
 ### `mode`
@@ -269,6 +271,17 @@ This is useful when buildings or the control room may be unloaded or offline. Wi
 
 ---
 
+## `lcd_mode` — List vs Carousel
+
+| Value | Behaviour |
+|---|---|
+| `list` (default) | All stored messages displayed at once, newest first. Same layout as previous versions. |
+| `carousel` | One message fills the screen. Cycles to the next every `lcd_carousel_seconds` seconds. Resets to the newest message whenever a new alert arrives. |
+
+Carousel is useful when you want a large, readable display for a single alert rather than a scrolling log. The grid name and message text each get their own section with full word-wrap across the LCD width.
+
+---
+
 ## Dispatch Board Layout
 
 ```
@@ -279,7 +292,19 @@ This is useful when buildings or the control room may be unloaded or offline. Wi
  # 2  [14:15]  Power Station    Battery power critically low
  # 3  [09:44]  Refinery         Ice supply low
 ══════════════════════════════════════════════════
- Run with CLEAR or CLEAR N to dismiss
+```
+
+**Carousel layout** (`lcd_mode = carousel`):
+
+```
+──────────────────────────────────────────────────
+
+
+ Hydrogen tanks critically low
+
+
+──────────────────────────────────────────────────
+ Hydro Plant  •  1/3  •  14:32
 ```
 
 Set the LCD to **Monospace** font for proper column alignment. The script sets `ContentType = TEXT_AND_IMAGE` automatically; it does not change your font size setting.
