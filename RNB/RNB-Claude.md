@@ -57,6 +57,7 @@ DrawProjectorsPage()     Per-projector build progress
 |---|---|---|
 | `TAG_ASSEMBLER` | `[RNBAssembler]` | Advanced assembler |
 | `TAG_BASIC_ASSEMBLER` | `[RNBBasicAssembler]` | Basic assembler — explicit override |
+| `TAG_NANOBOT` | `[NanoBot]` | Preferred explicit BaR/Nanobot detection tag |
 | `TAG_ALERT` | `[RNBAlert]` | Light block |
 | `TAG_PROJECTOR` | `[RNBProjector]` | Projector |
 | `TAG_LCD_STATUS` | `[RNBStatus]` | Status page |
@@ -71,7 +72,7 @@ DrawProjectorsPage()     Per-projector build progress
 
 `[RNBBasicAssembler]` takes priority over `[RNBAssembler]` — `hasBasicTag` is checked first, and `hasAdvancedTag = !hasBasicTag && n.Contains(TAG_ASSEMBLER)` prevents double-registration.
 
-BaR welders are auto-detected — no tag. All welders on the same construct responding to `GetValueBool("BuildAndRepair.ScriptControlled")` are added to `_welders.Welders`.
+BaR welders can be explicitly tagged `[NanoBot]`. If any valid `[NanoBot]` welders exist, RNB uses only those. If none are tagged, it falls back to auto-detecting all same-construct welders responding to `GetValueBool("BuildAndRepair.ScriptControlled")`.
 
 ---
 

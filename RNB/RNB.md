@@ -13,13 +13,14 @@ Version: v1.0.0
 | Feature | Detail |
 |---|---|
 | BaR welder monitoring | Auto-detects all BaR welders on the construct — no config needed |
+| Explicit Nanobot tag | `[NanoBot]` can select exactly which BaR blocks RNB monitors |
 | Assembler auto-queuing | Pushes missing components into tagged assemblers automatically on a fast throttled interval |
 | Smart assembler routing | Basic assemblers only receive components they can produce; advanced handle the rest |
 | Auto-produce mode fix | Switches assemblers out of Disassembly mode automatically when parts are missing |
 | Boot sequence | Animated boot screen on PB and tagged RNB LCDs on compile/reboot |
 | PB live screen | Compact status display on PB surface — no tag needed, always on |
 | Styled LCD pages | Sprite-mode display, dark navy theme, one fixed page per LCD |
-| Welder details | Per-welder: working/standby/off/damaged, BaR vs standard, on-target indicator |
+| Welder details | Per-welder: working/standby/off/damaged, mode, reason, BaR vs standard, on-target indicator |
 | Assembler details | Per-assembler: mode, enabled state, output count, repeat flag, cooperative flag |
 | Projector tracking | Build progress bar and remaining block count per projector |
 | Weld progress bar | Latches peak queue count at job start, fills as blocks complete |
@@ -58,6 +59,7 @@ Rename blocks in-game — no config editing required. The script rescans every *
 |---|---|---|
 | `[RNBAssembler]` | Advanced Assembler | Receives all missing components |
 | `[RNBBasicAssembler]` | Basic Assembler | Receives only basic-craftable components |
+| `[NanoBot]` | BaR welder | Preferred explicit BaR/Nanobot detection tag |
 | `[RNBAlert]` | Any light | Colour/blink reflects current state |
 | `[RNBProjector]` | Any Projector | Tracked on Projectors page |
 
@@ -89,6 +91,7 @@ Assembler Panel [RNBAssemblers]
 Build Progress [RNBProjectors]
 Main Assembler [RNBAssembler]
 Basic Assembler 1 [RNBBasicAssembler]
+Build Repair Unit [NanoBot]
 Alert Light [RNBAlert]
 Ship Blueprint [RNBProjector]
 ```
@@ -114,7 +117,8 @@ Per-welder rows:
 - Name — colour-coded by state (green=working, amber=standby, dim=off, red=damaged)
 - Status badge — WORKING / STANDBY / OFF / DAMAGED
 - Type — `BaR` (cyan) or `STD`, plus functional state
-- ON TARGET — shown when BaR is actively welding
+- ON TARGET — shown when that Nanobot is actively welding or grinding
+- Mode/reason — WELDING, GRINDING, OFFLINE, READY, plus a short reason such as Waiting parts, Weld queue, Grind queue, No target
 
 ### Assemblers `[RNBAssemblers]`
 Per-assembler rows (tagged assemblers only):
@@ -165,13 +169,14 @@ On every compile or reboot the PB's own LCD (surface 0) and tagged RNB LCDs show
 
 ## Auto-Offline
 
-Idle time is seconds since the last tick where any weld, grind, or collect target existed.
+Idle time is seconds since the last tick where any weld, grind, collect target, or tagged projector with remaining blocks existed.
 
 - Default: **10 minutes** — edit `IDLE_TIMEOUT_SECONDS` at the top of the script.
 - On timeout: all BaR welders disabled, state → OFFLINE.
 - Send `online` arg to re-enable and reset the clock.
 - Send `offline` arg to force immediate shutdown.
 - A forced offline is only cleared by `online`.
+- If BaR welders are manually re-enabled after an idle timeout, RNB clears non-forced OFFLINE automatically.
 
 ---
 

@@ -7,6 +7,7 @@
 //
 //   [RNBAssembler]          Advanced assembler — auto-queues all components
 //   [RNBBasicAssembler]     Basic assembler    — auto-queues basic components only
+//   [NanoBot]               BaR welder         — preferred explicit BaR detection tag
 //   [RNBAlert]              Light              — colour/blink reflects state
 //   [RNBProjector]          Projector          — tracked on Projector page
 //
@@ -55,6 +56,7 @@ private readonly Color COL_BAR_DONE  = new Color(  0,210, 90);
 // ---------------------------------------------------------------------------
 private const string TAG_ASSEMBLER        = "[RNBAssembler]";
 private const string TAG_BASIC_ASSEMBLER  = "[RNBBasicAssembler]";
+private const string TAG_NANOBOT          = "[NanoBot]";
 private const string TAG_ALERT            = "[RNBAlert]";
 private const string TAG_PROJECTOR        = "[RNBProjector]";
 private const string TAG_LCD_STATUS     = "[RNBStatus]";
@@ -105,6 +107,17 @@ private class BaRHandler
             int n = 0;
             for (int i = 0; i < Welders.Count; i++)
                 if (Welders[i].IsWorking && Welders[i].IsFunctional) n++;
+            return n;
+        }
+    }
+
+    public int CountEnabled
+    {
+        get
+        {
+            int n = 0;
+            for (int i = 0; i < Welders.Count; i++)
+                if (Welders[i].Enabled && Welders[i].IsFunctional) n++;
             return n;
         }
     }
@@ -184,6 +197,7 @@ private List<IMyAssembler>     _assemblers   = new List<IMyAssembler>();
 private List<DisplayEntry>     _displays     = new List<DisplayEntry>();
 private List<IMyLightingBlock> _alertLights  = new List<IMyLightingBlock>();
 private List<ProjectorInfo>    _projectors   = new List<ProjectorInfo>();
+private bool                   _usingNanoBotTags = false;
 
 private double   _elapsed          = 0.0;
 private double   _nextReinit       = 0.0;
@@ -302,14 +316,25 @@ public void Main(string argument, UpdateType updateSource)
 
     bool infoOnly = argument != null && argument.Trim().ToLower() == "info-only";
     RefreshBaRData();
+    RefreshProjectors();
+
+    if (_isOffline && !_forcedOffline && _welders.CountEnabled > 0)
+    {
+        _isOffline        = false;
+        _lastActivityTime = _elapsed;
+        _state            = RNBState.Idle;
+        Echo("ONLINE: BaR welder enabled manually.");
+    }
 
     // ── State update ────────────────────────────────────────────────────────
     if (!_isOffline)
     {
         int wtc      = _weldTargets != null ? _weldTargets.Count : 0;
+        bool projectorsActive = ProjectorsActive();
         bool anyWork = wtc > 0
             || (_grindTargets != null && _grindTargets.Count > 0)
-            || (_collectTargets != null && _collectTargets.Count > 0);
+            || (_collectTargets != null && _collectTargets.Count > 0)
+            || projectorsActive;
 
         if (anyWork) _lastActivityTime = _elapsed;
 
@@ -327,8 +352,6 @@ public void Main(string argument, UpdateType updateSource)
         else
             _state = RNBState.Idle;
     }
-
-    RefreshProjectors();
 
     if (!infoOnly && _elapsed >= _nextAssembler)
     {
@@ -356,6 +379,7 @@ private void Initialise()
     _displays.Clear();
     _alertLights.Clear();
     _projectors.Clear();
+    _usingNanoBotTags = false;
 
     _tBuf.Clear();
     GridTerminalSystem.GetBlocksOfType<IMyTerminalBlock>(_tBuf);
@@ -367,6 +391,16 @@ private void Initialise()
         string n = tb.CustomName;
 
         // Assemblers — explicit basic tag overrides subtype detection
+        if (n.Contains(TAG_NANOBOT))
+        {
+            var nw = tb as IMyShipWelder;
+            if (nw != null && BaRHandler.IsBaRWelder(nw) && !_welders.Welders.Contains(nw))
+            {
+                _welders.Welders.Add(nw);
+                _usingNanoBotTags = true;
+            }
+        }
+
         bool hasBasicTag    = n.Contains(TAG_BASIC_ASSEMBLER);
         bool hasAdvancedTag = !hasBasicTag && n.Contains(TAG_ASSEMBLER);
 
@@ -441,16 +475,20 @@ private void Initialise()
         }
     }
 
-    // BaR welder auto-detect
-    _wBuf.Clear();
-    GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(_wBuf);
-    for (int i = 0; i < _wBuf.Count; i++)
+    // BaR welder auto-detect, used only when no valid [NanoBot] tags exist.
+    if (!_usingNanoBotTags)
     {
-        if (!_wBuf[i].IsSameConstructAs(Me)) continue;
-        if (BaRHandler.IsBaRWelder(_wBuf[i])) _welders.Welders.Add(_wBuf[i]);
+        _wBuf.Clear();
+        GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(_wBuf);
+        for (int i = 0; i < _wBuf.Count; i++)
+        {
+            if (!_wBuf[i].IsSameConstructAs(Me)) continue;
+            if (BaRHandler.IsBaRWelder(_wBuf[i])) _welders.Welders.Add(_wBuf[i]);
+        }
     }
 
     string msg = "RNB v1.0 | Welders:" + _welders.Count
+        + (_usingNanoBotTags ? " tagged" : " auto")
         + " Asm:" + _assemblerIds.Count
         + " (B:" + _basicAssemblerIds.Count + " A:" + _advancedAssemblerIds.Count + ")"
         + " LCD:" + _displays.Count
@@ -523,6 +561,14 @@ private void RefreshProjectors()
             ? 1f - (float)info.Remaining / (float)info.Total
             : 0f;
     }
+}
+
+private bool ProjectorsActive()
+{
+    for (int i = 0; i < _projectors.Count; i++)
+        if (_projectors[i].Total > 0 && _projectors[i].Remaining > 0)
+            return true;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -854,7 +900,7 @@ private void DrawWeldersPage(MySpriteDrawFrame frame, float ox, float top, float
     float vx   = ox + W - 14f;
     float rowH = 20f;
 
-    DrawText(frame, "WELDER DETAILS", lx, y, 0.6f, COL_ACCENT, TextAlignment.LEFT);
+    DrawText(frame, _usingNanoBotTags ? "NANOBOT DETAILS" : "WELDER DETAILS", lx, y, 0.6f, COL_ACCENT, TextAlignment.LEFT);
     DrawText(frame, _welders.Count.ToString(), vx, y, 0.6f,
         _welders.Count > 0 ? COL_WHITE : COL_DIM, TextAlignment.RIGHT);
     y += 28f;
@@ -865,7 +911,7 @@ private void DrawWeldersPage(MySpriteDrawFrame frame, float ox, float top, float
 
     for (int i = 0; i < _welders.Welders.Count; i++)
     {
-        if (y + rowH * 2f > top + H) break;
+        if (y + rowH * 3f > top + H) break;
 
         var w  = _welders.Welders[i];
         var tb = w as IMyTerminalBlock;
@@ -892,8 +938,16 @@ private void DrawWeldersPage(MySpriteDrawFrame frame, float ox, float top, float
 
         DrawText(frame, barStr + "  " + funcStr, lx, y, 0.42f, barCol, TextAlignment.LEFT);
         // Show if currently locked onto a target
-        bool hasTarget = (_currentTarget != null);
+        bool hasTarget = WelderSlimValue(w, "BuildAndRepair.CurrentTarget") != null
+            || WelderSlimValue(w, "BuildAndRepair.CurrentGrindTarget") != null;
         DrawText(frame, hasTarget ? "ON TARGET" : "", vx, y, 0.42f, COL_GREEN, TextAlignment.RIGHT);
+        y += rowH + 3f;
+
+        string modeStr = WelderMode(w);
+        string reasonStr = WelderReason(w);
+        Color modeCol = modeStr == "GRINDING" ? COL_AMBER : (modeStr == "WELDING" ? COL_GREEN : (modeStr == "OFFLINE" ? COL_AMBER : COL_DIM));
+        DrawText(frame, modeStr, lx, y, 0.42f, modeCol, TextAlignment.LEFT);
+        DrawText(frame, TruncStr(reasonStr, 18), vx, y, 0.42f, COL_DIM, TextAlignment.RIGHT);
         y += rowH + 3f;
     }
 }
@@ -1250,6 +1304,39 @@ private static string DefinitionName(MyDefinitionId def)
     int slash = s.LastIndexOf('/');
     if (slash >= 0 && slash < s.Length - 1) return s.Substring(slash + 1);
     return s;
+}
+
+private static IMySlimBlock WelderSlimValue(IMyShipWelder w, string prop)
+{
+    try { return w.GetValue<IMySlimBlock>(prop); } catch { return null; }
+}
+
+private static long WelderLongValue(IMyShipWelder w, string prop)
+{
+    try { return w.GetValue<long>(prop); } catch { return -1; }
+}
+
+private string WelderMode(IMyShipWelder w)
+{
+    if (!w.IsFunctional) return "DAMAGED";
+    if (!w.Enabled) return "OFFLINE";
+    if (WelderSlimValue(w, "BuildAndRepair.CurrentGrindTarget") != null) return "GRINDING";
+    if (WelderSlimValue(w, "BuildAndRepair.CurrentTarget") != null) return "WELDING";
+
+    long mode = WelderLongValue(w, "BuildAndRepair.Mode");
+    if (mode >= 0) return "MODE " + mode;
+    return "READY";
+}
+
+private string WelderReason(IMyShipWelder w)
+{
+    if (!w.IsFunctional) return "Needs repair";
+    if (!w.Enabled) return "Block disabled";
+    if (_missing.Count > 0) return "Waiting parts";
+    if (_grindTargets != null && _grindTargets.Count > 0) return "Grind queue";
+    if (_weldTargets != null && _weldTargets.Count > 0) return "Weld queue";
+    if (_collectTargets != null && _collectTargets.Count > 0) return "Collecting";
+    return "No target";
 }
 
 private static string FormatTime(double sec)
