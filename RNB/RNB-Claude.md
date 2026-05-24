@@ -32,7 +32,8 @@ Main(arg, src)           Entry point every ~167ms (Update10)
 Initialise()             Full block scan by tag, runs every REINIT_INTERVAL seconds
 TagToPage()              Maps block name to PageKind via LCD tag constants
 RefreshProjectors()      Updates ProjectorInfo each tick from TotalBlocks/RemainingBlocks
-CheckAssemblerQueues()   Routes missing components to correct assembler pool
+RefreshBaRData()         Reads BaR mod state once per tick for state/pages/queueing
+CheckAssemblerQueues()   Routes cached missing components to correct assembler pool
   └─ IsBasicComponent()  Returns true if subtype is in BASIC_COMPONENTS[]
 EnsureAssemblyMode()     Fixes assemblers stuck in Disassembly mode
 UpdateAlertLights()      Sets colour/blink on [RNBAlert] lights
@@ -80,8 +81,13 @@ BaR welders are auto-detected — no tag. All welders on the same construct resp
 |---|---|---|
 | `_welders` | `BaRHandler` | Wraps all auto-detected BaR welders |
 | `_assemblerIds` | `List<long>` | All tagged assembler EntityIds |
+| `_assemblers` | `List<IMyAssembler>` | Tagged assembler block references from the last scan |
 | `_basicAssemblerIds` | `List<long>` | Basic assembler EntityIds only |
 | `_advancedAssemblerIds` | `List<long>` | Advanced assembler EntityIds only |
+| `_weldTargets` | `List<IMySlimBlock>` | Cached BaR weld queue for current tick |
+| `_grindTargets` | `List<IMySlimBlock>` | Cached BaR grind queue for current tick |
+| `_collectTargets` | `List<IMyEntity>` | Cached BaR collect targets for current tick |
+| `_missing` | `Dictionary<MyDefinitionId, int>` | Cached missing components for current tick |
 | `_displays` | `List<DisplayEntry>` | All registered LCD surfaces |
 | `_alertLights` | `List<IMyLightingBlock>` | All `[RNBAlert]` lights |
 | `_projectors` | `List<ProjectorInfo>` | All `[RNBProjector]` projectors |
@@ -103,6 +109,7 @@ BaR welders are auto-detected — no tag. All welders on the same construct resp
 
 ```
 CheckAssemblerQueues()
+  use cached _missing from RefreshBaRData()
   for each missing component:
     basicCanMake = IsBasicComponent(subtype)
     if basicCanMake && _basicAssemblerIds.Count > 0:
@@ -116,6 +123,8 @@ CheckAssemblerQueues()
 
 `BASIC_COMPONENTS[]` — vanilla subtypes a basic assembler can produce:
 `SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube, Motor, Display, BulletproofGlass, Girder`
+
+`ASSEMBLER_QUEUE_INTERVAL` controls how often production queueing runs. Default is 0.5 seconds for responsive missing-part production without running every Update10 tick.
 
 ---
 

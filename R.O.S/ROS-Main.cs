@@ -1660,26 +1660,22 @@ void DrawRadarDisplay(IMyTextPanel lcd)
         Color = SaltColor(COLOR_HEADER, st), Alignment = TextAlignment.CENTER });
 
     // Contact blips
-    MatrixD worldMatrix = Me.WorldMatrix;
-    Vector3D basePos    = Me.GetPosition();
+    Vector3D basePos = Me.GetPosition();
 
     foreach (var contact in _approachList)
     {
         float alpha = contact.ComputeAlpha();
         if (alpha <= 0f) continue;
 
-        // Transform contact world position to base-local 2D plane
+        // Use raw world offset — no PB orientation transform
+        // Radar N = world -Z, E = world +X (SE world axes, consistent regardless of base orientation)
         Vector3D offset = contact.WorldPos - basePos;
-        Vector3D local  = Vector3D.TransformNormal(offset, MatrixD.Transpose(worldMatrix));
-        // local.X = right, local.Y = up, local.Z = backward (SE forward = -Z)
-        // For radar top-down view: use X (right) and Z (forward/back) as the 2D plane
-        // Normalize by actual 3D distance so blip distance matches real distance
         double realDist = offset.Length();
-        if (realDist < 0.01) continue; // skip if at exact base position
+        if (realDist < 0.01) continue;
 
-        // Project onto horizontal plane (X/Z), preserve the real distance ratio
-        double horizX = local.X;
-        double horizZ = -local.Z; // negate: SE forward = -Z, radar forward = up
+        // World X = east/west, World Z = north/south (negated so -Z = up on radar = north)
+        double horizX =  offset.X; // east = right
+        double horizZ = -offset.Z; // north = up (negate because SE -Z is forward/north)
         double horizDist = Math.Sqrt(horizX * horizX + horizZ * horizZ);
 
         float normX, normZ;

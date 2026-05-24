@@ -13,10 +13,10 @@ Version: v1.0.0
 | Feature | Detail |
 |---|---|
 | BaR welder monitoring | Auto-detects all BaR welders on the construct — no config needed |
-| Assembler auto-queuing | Pushes missing components into tagged assemblers automatically |
+| Assembler auto-queuing | Pushes missing components into tagged assemblers automatically on a fast throttled interval |
 | Smart assembler routing | Basic assemblers only receive components they can produce; advanced handle the rest |
 | Auto-produce mode fix | Switches assemblers out of Disassembly mode automatically when parts are missing |
-| Boot sequence | Animated boot screen on PB's own LCD on compile/reboot |
+| Boot sequence | Animated boot screen on PB and tagged RNB LCDs on compile/reboot |
 | PB live screen | Compact status display on PB surface — no tag needed, always on |
 | Styled LCD pages | Sprite-mode display, dark navy theme, one fixed page per LCD |
 | Welder details | Per-welder: working/standby/off/damaged, BaR vs standard, on-target indicator |
@@ -25,7 +25,7 @@ Version: v1.0.0
 | Weld progress bar | Latches peak queue count at job start, fills as blocks complete |
 | Alert lights | Colour and blink rate reflects current system state |
 | Auto-offline | Disables BaR welders after 10 min of zero activity |
-| Argument control | `online` / `offline` / `info-only` via toolbar or timer block |
+| Argument control | `online` / `offline` / `info-only` / `reinit` via toolbar or timer block |
 
 ---
 
@@ -44,13 +44,13 @@ Version: v1.0.0
 3. Click **Check Code** — must show zero errors.
 4. Click **OK**.
 
-The script starts immediately. The PB's own LCD shows a boot sequence then switches to a live status panel. Check the PB detail panel for any warnings.
+The script starts immediately. The PB's own LCD and tagged RNB LCDs show a boot sequence, then switch to live pages. Check the PB detail panel for any warnings.
 
 ---
 
 ## Block Tags
 
-Rename blocks in-game — no config editing required. The script rescans every **30 seconds** automatically. Recompile the PB for immediate effect.
+Rename blocks in-game — no config editing required. The script rescans every **30 seconds** automatically. Send `reinit` for immediate effect.
 
 ### Non-LCD blocks
 
@@ -148,7 +148,7 @@ If a block is tagged `[RNBBasicAssembler]` that tag takes priority. Otherwise th
 
 ## PB Boot Screen
 
-On every compile or reboot the PB's own LCD (surface 0) shows a 3-second animated boot sequence — progress bar, animated dots, version info. After boot it switches to the live compact status panel showing welders, assemblers, queue counts, and the weld progress bar.
+On every compile or reboot the PB's own LCD (surface 0) and tagged RNB LCDs show a short animated boot sequence — progress bar, animated dots, version info, and percent. After boot they switch to the live pages.
 
 ---
 
@@ -192,6 +192,7 @@ Auto-mode: 'Basic Assembler 1' → Assembly
 | `online` | Re-enables welders, clears forced-offline, resets idle clock |
 | `offline` | Immediately disables welders, sets forced-offline |
 | `info-only` | Skips assembler queuing this cycle only |
+| `reinit` | Forces an immediate block/tag rescan |
 
 ---
 
@@ -201,8 +202,9 @@ Auto-mode: 'Basic Assembler 1' → Assembly
 |---|---|---|
 | `IDLE_TIMEOUT_SECONDS` | `600.0` | Seconds of zero activity before auto-offline |
 | `AUTO_PRODUCE_FIX_MODE` | `true` | Auto-switch assemblers from Disassembly → Assembly |
-| `REINIT_INTERVAL` | `30.0` | Seconds between block tag rescans |
-| `BOOT_DURATION` | `3.0` | Seconds the boot animation plays |
+| `REINIT_INTERVAL` | `10.0` | Seconds between block tag rescans |
+| `ASSEMBLER_QUEUE_INTERVAL` | `0.5` | Seconds between assembler queue checks |
+| `BOOT_DURATION` | `1.0` | Seconds the boot animation plays |
 
 ---
 
@@ -219,7 +221,7 @@ Auto-mode: 'Basic Assembler 1' → Assembly
 | Basic assembler not producing | Component may require an advanced assembler — check `[RNBMissing]` LCD |
 | Wrong page on LCD | Tags are case-sensitive — check exact spelling |
 
-**Debug:** Open the PB terminal detail panel — shows init counts, auto-mode switches, queue failures, and online/offline transitions.
+**Debug:** Open the PB terminal detail panel — shows init counts, auto-mode switches, queue failures, reinit, and online/offline transitions.
 
 ---
 

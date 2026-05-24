@@ -32,22 +32,23 @@
 // ---------------------------------------------------------------------------
 private const double IDLE_TIMEOUT_SECONDS  = 600.0;  // 10 min idle → auto-offline
 private const bool   AUTO_PRODUCE_FIX_MODE = true;   // auto-fix assembler mode
-private const double REINIT_INTERVAL       = 30.0;   // seconds between block rescans
+private const double REINIT_INTERVAL       = 10.0;   // seconds between block rescans
+private const double ASSEMBLER_QUEUE_INTERVAL = 0.5; // seconds between production queue checks
 
 // ---------------------------------------------------------------------------
 // COLOUR PALETTE
 // ---------------------------------------------------------------------------
-private static readonly Color COL_BG        = new Color(  4,  8, 16);
-private static readonly Color COL_ACCENT    = new Color(  0,180,255);
-private static readonly Color COL_DIM       = new Color( 20, 60, 90);
-private static readonly Color COL_WHITE     = new Color(220,235,255);
-private static readonly Color COL_GREEN     = new Color(  0,220,100);
-private static readonly Color COL_AMBER     = new Color(255,160,  0);
-private static readonly Color COL_RED       = new Color(220, 30, 30);
-private static readonly Color COL_HEADER_BG = new Color(  0, 40, 80);
-private static readonly Color COL_BAR_BG    = new Color( 10, 25, 45);
-private static readonly Color COL_BAR_FILL  = new Color(  0,160,220);
-private static readonly Color COL_BAR_DONE  = new Color(  0,210, 90);
+private readonly Color COL_BG        = new Color(  4,  8, 16);
+private readonly Color COL_ACCENT    = new Color(  0,180,255);
+private readonly Color COL_DIM       = new Color( 20, 60, 90);
+private readonly Color COL_WHITE     = new Color(220,235,255);
+private readonly Color COL_GREEN     = new Color(  0,220,100);
+private readonly Color COL_AMBER     = new Color(255,160,  0);
+private readonly Color COL_RED       = new Color(220, 30, 30);
+private readonly Color COL_HEADER_BG = new Color(  0, 40, 80);
+private readonly Color COL_BAR_BG    = new Color( 10, 25, 45);
+private readonly Color COL_BAR_FILL  = new Color(  0,160,220);
+private readonly Color COL_BAR_DONE  = new Color(  0,210, 90);
 
 // ---------------------------------------------------------------------------
 // LCD TAGS — one per page kind
@@ -124,6 +125,9 @@ private class BaRHandler
     public void SetEnabled(bool on)
     { for (int i = 0; i < Welders.Count; i++) Welders[i].Enabled = on; }
 
+    public void ResetProductionCache()
+    { EnsureQueuedFn = null; }
+
     public bool AllowBuild
     { get { return Welders.Count > 0 && Welders[0].GetValueBool("BuildAndRepair.AllowBuild"); } }
 
@@ -176,6 +180,7 @@ private class BaRHandler
 // ---------------------------------------------------------------------------
 private BaRHandler             _welders      = new BaRHandler();
 private List<long>             _assemblerIds = new List<long>();
+private List<IMyAssembler>     _assemblers   = new List<IMyAssembler>();
 private List<DisplayEntry>     _displays     = new List<DisplayEntry>();
 private List<IMyLightingBlock> _alertLights  = new List<IMyLightingBlock>();
 private List<ProjectorInfo>    _projectors   = new List<ProjectorInfo>();
@@ -187,6 +192,15 @@ private double   _lastActivityTime = 0.0;
 private bool     _isOffline        = false;
 private bool     _forcedOffline    = false;
 private RNBState _state            = RNBState.Idle;
+private int      _drawTick         = 0;
+
+// BaR data snapshot. Mod API reads are kept to one place per tick.
+private List<IMySlimBlock> _weldTargets = null;
+private List<IMySlimBlock> _grindTargets = null;
+private List<IMyEntity> _collectTargets = null;
+private Dictionary<MyDefinitionId, int> _missing = new Dictionary<MyDefinitionId, int>();
+private IMySlimBlock _currentTarget = null;
+private IMySlimBlock _currentGrindTarget = null;
 
 // Weld progress latch
 private int _weldPeak = 0;
@@ -196,7 +210,7 @@ private int _weldPrev = 0;
 private enum BootStage { Booting, Ready }
 private BootStage _bootStage    = BootStage.Booting;
 private double    _bootElapsed  = 0.0;
-private const double BOOT_DURATION = 3.0;   // seconds for boot animation
+private const double BOOT_DURATION = 1.0;   // seconds for boot animation
 private float     _bootProgress = 0f;
 private int       _bootDotCount = 0;
 private double    _bootDotTimer = 0.0;
@@ -206,7 +220,6 @@ private IMyTextSurface _pbSurface = null;
 
 // Scan buffers
 private readonly List<IMyShipWelder>    _wBuf = new List<IMyShipWelder>();
-private readonly List<IMyAssembler>     _aBuf = new List<IMyAssembler>();
 private readonly List<IMyTerminalBlock> _tBuf = new List<IMyTerminalBlock>();
 
 // Assembler ID lists split by capability
@@ -216,7 +229,7 @@ private List<long> _basicAssemblerIds    = new List<long>();
 private List<long> _advancedAssemblerIds = new List<long>();
 
 // Components a basic assembler CAN produce (vanilla SE subtypes)
-private static readonly string[] BASIC_COMPONENTS = new string[] {
+private readonly string[] BASIC_COMPONENTS = new string[] {
     "SteelPlate", "InteriorPlate", "Construction", "SmallTube",
     "LargeTube", "Motor", "Display", "BulletproofGlass", "Girder"
 };
@@ -238,6 +251,7 @@ public Program()
 
     Initialise();
     DrawBootScreen(0f); // show boot immediately on first compile
+    DrawBootDisplays(0f);
 }
 
 public void Save() { }
@@ -246,9 +260,10 @@ public void Main(string argument, UpdateType updateSource)
 {
     _elapsed     += Runtime.TimeSinceLastRun.TotalSeconds;
     _bootElapsed += Runtime.TimeSinceLastRun.TotalSeconds;
+    bool pbBooting = _bootStage == BootStage.Booting;
 
     // Boot sequence — run for BOOT_DURATION seconds, then switch to live
-    if (_bootStage == BootStage.Booting)
+    if (pbBooting)
     {
         _bootProgress = (float)(_bootElapsed / BOOT_DURATION);
         if (_bootProgress > 1f) _bootProgress = 1f;
@@ -258,17 +273,25 @@ public void Main(string argument, UpdateType updateSource)
         if (_bootDotTimer >= 0.4) { _bootDotTimer = 0; _bootDotCount = (_bootDotCount + 1) % 4; }
 
         DrawBootScreen(_bootProgress);
+        DrawBootDisplays(_bootProgress);
 
         if (_bootElapsed >= BOOT_DURATION)
+        {
             _bootStage = BootStage.Ready;
-        return; // don't run main logic during boot
+            pbBooting = false;
+        }
+        else
+        {
+            return;
+        }
     }
 
     if (!string.IsNullOrEmpty(argument))
     {
         string arg = argument.Trim().ToLower();
-        if (arg == "online")  { BringOnline();  return; }
-        if (arg == "offline") { _forcedOffline = true; BringOffline("Forced offline."); return; }
+        if (arg == "online")  { BringOnline(); }
+        if (arg == "offline") { _forcedOffline = true; BringOffline("Forced offline."); }
+        if (arg == "reinit")  { Initialise(); _nextReinit = _elapsed + REINIT_INTERVAL; Echo("REINIT complete."); }
     }
 
     if (_elapsed >= _nextReinit)
@@ -278,19 +301,15 @@ public void Main(string argument, UpdateType updateSource)
     }
 
     bool infoOnly = argument != null && argument.Trim().ToLower() == "info-only";
+    RefreshBaRData();
 
     // ── State update ────────────────────────────────────────────────────────
     if (!_isOffline)
     {
-        var wt  = _welders.PossibleTargets();
-        var gt  = _welders.PossibleGrindTargets();
-        var ct  = _welders.PossibleCollectTargets();
-        var mis = _welders.MissingComponents();
-
-        int wtc      = wt != null ? wt.Count : 0;
+        int wtc      = _weldTargets != null ? _weldTargets.Count : 0;
         bool anyWork = wtc > 0
-            || (gt != null && gt.Count > 0)
-            || (ct != null && ct.Count > 0);
+            || (_grindTargets != null && _grindTargets.Count > 0)
+            || (_collectTargets != null && _collectTargets.Count > 0);
 
         if (anyWork) _lastActivityTime = _elapsed;
 
@@ -299,7 +318,7 @@ public void Main(string argument, UpdateType updateSource)
         if (wtc > _weldPeak)           _weldPeak = wtc;
         _weldPrev = wtc;
 
-        if (mis.Count > 0)
+        if (_missing.Count > 0)
             _state = RNBState.Missing;
         else if (anyWork)
             _state = RNBState.Working;
@@ -313,13 +332,14 @@ public void Main(string argument, UpdateType updateSource)
 
     if (!infoOnly && _elapsed >= _nextAssembler)
     {
-        _nextAssembler = _elapsed + 0.1;
+        _nextAssembler = _elapsed + ASSEMBLER_QUEUE_INTERVAL;
         CheckAssemblerQueues();
     }
 
     UpdateAlertLights();
     DrawDisplays();
-    DrawPBScreen();
+    if (!pbBooting) DrawPBScreen();
+    _drawTick = (_drawTick + 1) % 1000;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +348,9 @@ public void Main(string argument, UpdateType updateSource)
 private void Initialise()
 {
     _welders.Welders.Clear();
+    _welders.ResetProductionCache();
     _assemblerIds.Clear();
+    _assemblers.Clear();
     _basicAssemblerIds.Clear();
     _advancedAssemblerIds.Clear();
     _displays.Clear();
@@ -354,6 +376,7 @@ private void Initialise()
             if (asm != null && !_assemblerIds.Contains(asm.EntityId))
             {
                 _assemblerIds.Add(asm.EntityId);
+                _assemblers.Add(asm);
                 bool isBasic;
                 if (hasBasicTag)
                 {
@@ -367,9 +390,13 @@ private void Initialise()
                     isBasic = defSubtype.IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) >= 0;
                 }
                 if (isBasic)
+                {
                     _basicAssemblerIds.Add(asm.EntityId);
+                }
                 else
+                {
                     _advancedAssemblerIds.Add(asm.EntityId);
+                }
             }
         }
 
@@ -433,16 +460,13 @@ private void Initialise()
     // Extra: confirm each assembler found by name
     if (_assemblerIds.Count > 0)
     {
-        _aBuf.Clear();
-        GridTerminalSystem.GetBlocksOfType<IMyAssembler>(_aBuf);
-        for (int i = 0; i < _aBuf.Count; i++)
+        for (int i = 0; i < _assemblers.Count; i++)
         {
-            if (!_assemblerIds.Contains(_aBuf[i].EntityId)) continue;
-            var atb = _aBuf[i] as IMyTerminalBlock;
+            var atb = _assemblers[i] as IMyTerminalBlock;
             string aname = atb != null ? atb.CustomName : "?";
-            bool enabled = _aBuf[i].Enabled;
-            bool working = _aBuf[i].IsWorking;
-            string amode = _aBuf[i].Mode == MyAssemblerMode.Disassembly ? "DISASM" : "ASSEM";
+            bool enabled = _assemblers[i].Enabled;
+            bool working = _assemblers[i].IsWorking;
+            string amode = _assemblers[i].Mode == MyAssemblerMode.Disassembly ? "DISASM" : "ASSEM";
             Echo("  ASM: " + aname + " | " + amode + " | en=" + enabled + " wrk=" + working);
         }
     }
@@ -464,12 +488,22 @@ private static bool TagToPage(string name, out PageKind page)
     return false;
 }
 
-private static void PrepSurface(IMyTextSurface s)
+private void PrepSurface(IMyTextSurface s)
 {
     s.ContentType           = ContentType.SCRIPT;
     s.ScriptBackgroundColor = COL_BG;
     s.BackgroundColor       = COL_BG;
     s.Script                = "";
+}
+
+private void RefreshBaRData()
+{
+    _weldTargets        = _welders.PossibleTargets();
+    _grindTargets       = _welders.PossibleGrindTargets();
+    _collectTargets     = _welders.PossibleCollectTargets();
+    _missing            = _welders.MissingComponents();
+    _currentTarget      = _welders.CurrentTarget;
+    _currentGrindTarget = _welders.CurrentGrindTarget;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,12 +562,11 @@ private void CheckAssemblerQueues()
         return;
     }
 
-    var missing = _welders.MissingComponents();
-    if (missing.Count == 0) return;  // nothing needed — silent
+    if (_missing.Count == 0) return;  // nothing needed - silent
 
     if (AUTO_PRODUCE_FIX_MODE) EnsureAssemblyMode();
 
-    foreach (var kv in missing)
+    foreach (var kv in _missing)
     {
         if (kv.Value <= 0) continue;
 
@@ -558,7 +591,7 @@ private void CheckAssemblerQueues()
 }
 
 // Returns true if a basic assembler can produce this component subtype.
-private static bool IsBasicComponent(string subtype)
+private bool IsBasicComponent(string subtype)
 {
     for (int i = 0; i < BASIC_COMPONENTS.Length; i++)
         if (BASIC_COMPONENTS[i] == subtype) return true;
@@ -567,13 +600,9 @@ private static bool IsBasicComponent(string subtype)
 
 private void EnsureAssemblyMode()
 {
-    _aBuf.Clear();
-    GridTerminalSystem.GetBlocksOfType<IMyAssembler>(_aBuf);
-    for (int i = 0; i < _aBuf.Count; i++)
+    for (int i = 0; i < _assemblers.Count; i++)
     {
-        var asm = _aBuf[i];
-        if (!asm.IsSameConstructAs(Me))            continue;
-        if (!_assemblerIds.Contains(asm.EntityId)) continue;
+        var asm = _assemblers[i];
         if (!asm.IsFunctional || !asm.Enabled)     continue;
         if (asm.Mode == MyAssemblerMode.Disassembly)
         {
@@ -659,6 +688,8 @@ private void DrawPage(DisplayEntry entry)
             ox + 12f, row2Y, 0.45f, COL_DIM, TextAlignment.LEFT);
         DrawText(frame, "[ " + stateStr + " ]",
             ox + W - 12f, row2Y, 0.45f, stateCol, TextAlignment.RIGHT);
+        DrawText(frame, "LIVE " + _drawTick.ToString().PadLeft(3, '0'),
+            ox + W/2f, row2Y, 0.38f, COL_ACCENT, TextAlignment.CENTER);
 
         DrawRect(frame, ox + W/2f, oy + headerH + 1f, W, 2f, COL_ACCENT);
 
@@ -670,8 +701,8 @@ private void DrawPage(DisplayEntry entry)
         {
             case PageKind.Status:     DrawStatusPage    (frame, ox, cTop, W, cH); break;
             case PageKind.Missing:    DrawMissingPage   (frame, ox, cTop, W, cH); break;
-            case PageKind.Weld:       DrawListPage      (frame, ox, cTop, W, cH, "WELD QUEUE",  _welders.PossibleTargets());     break;
-            case PageKind.Grind:      DrawListPage      (frame, ox, cTop, W, cH, "GRIND QUEUE", _welders.PossibleGrindTargets());break;
+            case PageKind.Weld:       DrawListPage      (frame, ox, cTop, W, cH, "WELD QUEUE",  _weldTargets);      break;
+            case PageKind.Grind:      DrawListPage      (frame, ox, cTop, W, cH, "GRIND QUEUE", _grindTargets);     break;
             case PageKind.Welders:    DrawWeldersPage   (frame, ox, cTop, W, cH); break;
             case PageKind.Assemblers: DrawAssemblersPage(frame, ox, cTop, W, cH); break;
             case PageKind.Projectors: DrawProjectorsPage(frame, ox, cTop, W, cH); break;
@@ -699,13 +730,9 @@ private void DrawStatusPage(MySpriteDrawFrame frame, float ox, float top, float 
     float vx   = ox + W - 14f;
     float fs   = 0.52f;
 
-    var wt  = _welders.PossibleTargets();
-    var gt  = _welders.PossibleGrindTargets();
-    var ct  = _welders.PossibleCollectTargets();
-    var mis = _welders.MissingComponents();
-    int wtc = wt != null ? wt.Count : 0;
-    int gtc = gt != null ? gt.Count : 0;
-    int ctc = ct != null ? ct.Count : 0;
+    int wtc = _weldTargets != null ? _weldTargets.Count : 0;
+    int gtc = _grindTargets != null ? _grindTargets.Count : 0;
+    int ctc = _collectTargets != null ? _collectTargets.Count : 0;
 
     DrawRow(frame, lx, vx, y, fs, "BaR Welders",
         _welders.CountWorking + " / " + _welders.Count,
@@ -713,16 +740,16 @@ private void DrawStatusPage(MySpriteDrawFrame frame, float ox, float top, float 
     DrawRow(frame, lx, vx, y, fs, "Assemblers",
         _assemblerIds.Count.ToString(), COL_WHITE); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Welding now",
-        SlimName(_welders.CurrentTarget),
-        _welders.CurrentTarget != null ? COL_GREEN : COL_DIM); y += rowH;
+        SlimName(_currentTarget),
+        _currentTarget != null ? COL_GREEN : COL_DIM); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Grinding now",
-        SlimName(_welders.CurrentGrindTarget),
-        _welders.CurrentGrindTarget != null ? COL_AMBER : COL_DIM); y += rowH;
+        SlimName(_currentGrindTarget),
+        _currentGrindTarget != null ? COL_AMBER : COL_DIM); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Weld queue",  wtc.ToString(), wtc > 0 ? COL_WHITE : COL_DIM); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Grind queue", gtc.ToString(), gtc > 0 ? COL_WHITE : COL_DIM); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Floating",    ctc.ToString(), ctc > 0 ? COL_WHITE : COL_DIM); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Missing types",
-        mis.Count.ToString(), mis.Count > 0 ? COL_RED : COL_GREEN); y += rowH;
+        _missing.Count.ToString(), _missing.Count > 0 ? COL_RED : COL_GREEN); y += rowH;
     DrawRow(frame, lx, vx, y, fs, "Projectors",
         _projectors.Count.ToString(), _projectors.Count > 0 ? COL_ACCENT : COL_DIM);
 }
@@ -732,29 +759,39 @@ private void DrawStatusPage(MySpriteDrawFrame frame, float ox, float top, float 
 // ---------------------------------------------------------------------------
 private void DrawMissingPage(MySpriteDrawFrame frame, float ox, float top, float W, float H)
 {
-    var mis   = _welders.MissingComponents();
     float y   = top;
     float lx  = ox + 14f;
     float vx  = ox + W - 14f;
-    float rowH = 22f;
+    float rowH = 34f;
 
-    DrawText(frame, "MISSING COMPONENTS", lx, y, 0.6f, COL_RED, TextAlignment.LEFT);
-    DrawText(frame, mis.Count.ToString(), vx, y, 0.6f,
-        mis.Count > 0 ? COL_RED : COL_GREEN, TextAlignment.RIGHT);
-    y += 28f;
+    DrawText(frame, "MISSING PARTS", lx, y, 0.72f, COL_RED, TextAlignment.LEFT);
+    DrawText(frame, _missing.Count + " TYPES", vx, y, 0.56f,
+        _missing.Count > 0 ? COL_RED : COL_GREEN, TextAlignment.RIGHT);
+    y += 32f;
     DrawRect(frame, ox + W/2f, y, W - 20f, 1f, COL_DIM); y += 8f;
 
-    if (mis.Count == 0)
-    { DrawText(frame, "All components available", ox + W/2f, top + H/2f, 0.55f, COL_GREEN, TextAlignment.CENTER); return; }
+    if (_missing.Count == 0)
+    {
+        DrawText(frame, "ALL PARTS AVAILABLE", ox + W/2f, top + H/2f - 8f, 0.72f, COL_GREEN, TextAlignment.CENTER);
+        DrawText(frame, "No missing components", ox + W/2f, top + H/2f + 24f, 0.44f, COL_DIM, TextAlignment.CENTER);
+        return;
+    }
 
     int maxRows = (int)((top + H - y) / rowH);
+    if (maxRows <= 0)
+    {
+        DrawText(frame, _missing.Count + " missing types", ox + W/2f, top + H/2f, 0.65f, COL_RED, TextAlignment.CENTER);
+        return;
+    }
+
     int shown   = 0;
-    foreach (var kv in mis)
+    foreach (var kv in _missing)
     {
         if (shown >= maxRows - 1) { DrawText(frame, "...", lx, y, 0.42f, COL_DIM, TextAlignment.LEFT); break; }
         Color c = shown % 2 == 0 ? new Color(255,120,120) : new Color(220,80,80);
-        DrawText(frame, TruncStr(kv.Key.SubtypeName, 22), lx, y, 0.5f, c, TextAlignment.LEFT);
-        DrawText(frame, "x" + kv.Value,                  vx, y, 0.5f, c, TextAlignment.RIGHT);
+        DrawRect(frame, ox + W/2f, y + 13f, W - 24f, 24f, shown % 2 == 0 ? new Color(20,35,55) : new Color(12,26,44));
+        DrawText(frame, "x" + kv.Value, lx + 4f, y + 1f, 0.62f, c, TextAlignment.LEFT);
+        DrawText(frame, TruncStr(DefinitionName(kv.Key), 22), lx + 92f, y + 1f, 0.62f, c, TextAlignment.LEFT);
         y += rowH; shown++;
     }
 }
@@ -790,7 +827,10 @@ private void DrawListPage(MySpriteDrawFrame frame, float ox, float top, float W,
     }
 
     if (count == 0)
-    { DrawText(frame, "Queue empty", ox + W/2f, top + H/2f, 0.55f, COL_DIM, TextAlignment.CENTER); return; }
+    {
+        DrawText(frame, "QUEUE EMPTY", ox + W/2f, top + H/2f - 4f, 0.68f, COL_DIM, TextAlignment.CENTER);
+        return;
+    }
 
     int maxRows = (int)((top + H - y) / rowH);
     int shown   = 0;
@@ -845,14 +885,14 @@ private void DrawWeldersPage(MySpriteDrawFrame frame, float ox, float top, float
         y += rowH;
 
         // Row 2 — BaR type + functional state
-        string barStr  = BaRHandler.IsBaRWelder(w) ? "BaR" : "STD";
-        Color  barCol  = BaRHandler.IsBaRWelder(w) ? COL_ACCENT : COL_DIM;
+        bool isBar = BaRHandler.IsBaRWelder(w);
+        string barStr  = isBar ? "BaR" : "STD";
+        Color  barCol  = isBar ? COL_ACCENT : COL_DIM;
         string funcStr = w.IsFunctional ? "OK" : "DAMAGED";
-        Color  funcCol = w.IsFunctional ? COL_DIM : COL_RED;
 
         DrawText(frame, barStr + "  " + funcStr, lx, y, 0.42f, barCol, TextAlignment.LEFT);
         // Show if currently locked onto a target
-        bool hasTarget = (_welders.CurrentTarget != null);
+        bool hasTarget = (_currentTarget != null);
         DrawText(frame, hasTarget ? "ON TARGET" : "", vx, y, 0.42f, COL_GREEN, TextAlignment.RIGHT);
         y += rowH + 3f;
     }
@@ -877,20 +917,15 @@ private void DrawAssemblersPage(MySpriteDrawFrame frame, float ox, float top, fl
     if (_assemblerIds.Count == 0)
     { DrawText(frame, "No [RNBAssembler] tagged", ox + W/2f, top + H/2f, 0.45f, COL_DIM, TextAlignment.CENTER); return; }
 
-    _aBuf.Clear();
-    GridTerminalSystem.GetBlocksOfType<IMyAssembler>(_aBuf);
-
     int shown = 0;
-    for (int i = 0; i < _aBuf.Count; i++)
+    for (int i = 0; i < _assemblers.Count; i++)
     {
-        var asm = _aBuf[i];
-        if (!asm.IsSameConstructAs(Me))            continue;
-        if (!_assemblerIds.Contains(asm.EntityId)) continue;
+        var asm = _assemblers[i];
         if (y + rowH * 3f > top + H)              break;
 
         var tb = asm as IMyTerminalBlock;
         string asmName = tb != null
-            ? TruncStr(tb.CustomName.Replace(TAG_ASSEMBLER, "").Trim(), 20)
+            ? TruncStr(tb.CustomName.Replace(TAG_BASIC_ASSEMBLER, "").Replace(TAG_ASSEMBLER, "").Trim(), 20)
             : "Assembler";
 
         // Row 1 — name + enabled state
@@ -953,6 +988,12 @@ private void DrawProjectorsPage(MySpriteDrawFrame frame, float ox, float top, fl
 
     for (int i = 0; i < _projectors.Count; i++)
     {
+        if (y + 42f > top + H)
+        {
+            DrawText(frame, "+ " + (_projectors.Count - i) + " more", lx, y, 0.42f, COL_DIM, TextAlignment.LEFT);
+            break;
+        }
+
         var info   = _projectors[i];
         bool active = info.Total > 0 && info.Remaining > 0;
 
@@ -993,7 +1034,17 @@ private void DrawBootScreen(float progress)
 {
     if (_pbSurface == null) return;
 
-    var s  = _pbSurface;
+    DrawBootSurface(_pbSurface, progress, true);
+}
+
+private void DrawBootDisplays(float progress)
+{
+    for (int i = 0; i < _displays.Count; i++)
+        DrawBootSurface(_displays[i].Surface, progress, false);
+}
+
+private void DrawBootSurface(IMyTextSurface s, float progress, bool compact)
+{
     var vp = new RectangleF((s.TextureSize - s.SurfaceSize) / 2f, s.SurfaceSize);
     float W  = vp.Width;
     float H  = vp.Height;
@@ -1009,12 +1060,12 @@ private void DrawBootScreen(float progress)
         DrawRect(frame, ox + W/2f, oy + 4f, W, 3f, COL_ACCENT);
 
         // Logo / title block — centred
-        float midY = oy + H * 0.28f;
-        DrawText(frame, "RNB", ox + W/2f, midY, 1.8f, COL_ACCENT, TextAlignment.CENTER);
+        float midY = compact ? oy + H * 0.28f : oy + H * 0.24f;
+        DrawText(frame, "RNB", ox + W/2f, midY, compact ? 1.8f : 1.35f, COL_ACCENT, TextAlignment.CENTER);
         DrawText(frame, "Rev's Nanobot Bridge",
-            ox + W/2f, midY + 52f, 0.48f, COL_WHITE, TextAlignment.CENTER);
+            ox + W/2f, midY + (compact ? 52f : 42f), compact ? 0.48f : 0.52f, COL_WHITE, TextAlignment.CENTER);
         DrawText(frame, "v1.0  |  505th Expeditionary Force",
-            ox + W/2f, midY + 76f, 0.38f, COL_DIM, TextAlignment.CENTER);
+            ox + W/2f, midY + (compact ? 76f : 68f), 0.38f, COL_DIM, TextAlignment.CENTER);
 
         // Divider
         DrawRect(frame, ox + W/2f, oy + H * 0.55f, W * 0.7f, 1f, COL_DIM);
@@ -1031,6 +1082,7 @@ private void DrawBootScreen(float progress)
         string bootMsg = progress >= 1f ? "READY" : ("INITIALISING" + dots);
         Color  bootCol = progress >= 1f ? COL_GREEN : COL_WHITE;
         DrawText(frame, bootMsg, ox + W/2f, barY + 24f, 0.48f, bootCol, TextAlignment.CENTER);
+        DrawText(frame, (int)(progress * 100f) + "%", ox + W/2f, barY + 48f, 0.42f, COL_ACCENT, TextAlignment.CENTER);
 
         // Bottom accent bar
         DrawRect(frame, ox + W/2f, oy + H - 4f, W, 3f, COL_ACCENT);
@@ -1082,11 +1134,8 @@ private void DrawPBScreen()
         float fs = 0.45f;
         float rh = 18f;
 
-        var wt  = _welders.PossibleTargets();
-        var gt  = _welders.PossibleGrindTargets();
-        var mis = _welders.MissingComponents();
-        int wtc = wt  != null ? wt.Count  : 0;
-        int gtc = gt  != null ? gt.Count  : 0;
+        int wtc = _weldTargets != null ? _weldTargets.Count : 0;
+        int gtc = _grindTargets != null ? _grindTargets.Count : 0;
 
         DrawRow(frame, lx, vx, y, fs, "Welders",
             _welders.CountWorking + "/" + _welders.Count,
@@ -1099,7 +1148,7 @@ private void DrawPBScreen()
         DrawRow(frame, lx, vx, y, fs, "Grind Q",
             gtc.ToString(), gtc > 0 ? COL_WHITE : COL_DIM); y += rh;
         DrawRow(frame, lx, vx, y, fs, "Missing",
-            mis.Count.ToString(), mis.Count > 0 ? COL_RED : COL_GREEN); y += rh;
+            _missing.Count.ToString(), _missing.Count > 0 ? COL_RED : COL_GREEN); y += rh;
         DrawRow(frame, lx, vx, y, fs, "Projectors",
             _projectors.Count.ToString(),
             _projectors.Count > 0 ? COL_ACCENT : COL_DIM); y += rh;
@@ -1130,7 +1179,7 @@ private void DrawPBScreen()
 // ---------------------------------------------------------------------------
 // SPRITE HELPERS
 // ---------------------------------------------------------------------------
-private static void DrawProgressBar(MySpriteDrawFrame f,
+private void DrawProgressBar(MySpriteDrawFrame f,
     float x, float y, float w, float h, float pct, Color fillCol)
 {
     DrawRect(f, x + w/2f, y + h/2f, w,    h,    COL_BAR_BG);
@@ -1144,7 +1193,7 @@ private static void DrawProgressBar(MySpriteDrawFrame f,
     DrawRect(f, x + 1f + fw/2f, y + h/2f, fw, h - 2f, fillCol);
 }
 
-private static void DrawRect(MySpriteDrawFrame f,
+private void DrawRect(MySpriteDrawFrame f,
     float cx, float cy, float w, float h, Color col)
 {
     var sp = new MySprite();
@@ -1157,7 +1206,7 @@ private static void DrawRect(MySpriteDrawFrame f,
     f.Add(sp);
 }
 
-private static void DrawText(MySpriteDrawFrame f, string text,
+private void DrawText(MySpriteDrawFrame f, string text,
     float x, float y, float scale, Color col, TextAlignment align)
 {
     var sp = new MySprite();
@@ -1171,7 +1220,7 @@ private static void DrawText(MySpriteDrawFrame f, string text,
     f.Add(sp);
 }
 
-private static void DrawRow(MySpriteDrawFrame f, float lx, float vx, float y,
+private void DrawRow(MySpriteDrawFrame f, float lx, float vx, float y,
     float fs, string label, string value, Color valCol)
 {
     DrawText(f, label, lx, y, fs, COL_WHITE, TextAlignment.LEFT);
@@ -1190,6 +1239,17 @@ private static string SlimName(IMySlimBlock b)
         return tb != null ? tb.CustomName : b.FatBlock.BlockDefinition.SubtypeName;
     }
     return b.BlockDefinition.SubtypeName;
+}
+
+private static string DefinitionName(MyDefinitionId def)
+{
+    string s = def.SubtypeName;
+    if (!string.IsNullOrEmpty(s)) return s;
+
+    s = def.ToString();
+    int slash = s.LastIndexOf('/');
+    if (slash >= 0 && slash < s.Length - 1) return s.Substring(slash + 1);
+    return s;
 }
 
 private static string FormatTime(double sec)
