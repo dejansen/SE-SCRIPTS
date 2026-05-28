@@ -1,7 +1,7 @@
 // =============================================================================
-// RNB — Rev's Nanobot Bridge  v1.0.0
+// RNB — Rev NanoBot Manager  v1.0.0
 // Companion script for SKO Nanobot Build and Repair System (Maintained) v2.5.0+
-// Author : Simba 'Davy' Jones — 505th Expeditionary Force
+// Author : RevGamer
 //
 // BLOCK TAGS — rename blocks in-game, no config needed:
 //
@@ -19,37 +19,36 @@
 //   [RNBWelders]            Per-welder status detail
 //   [RNBAssemblers]         Per-assembler status detail
 //   [RNBProjectors]         Projector build progress
-//
 //   PB surface 0 shows boot sequence then live status — no tag needed.
 //
-// TOOLBAR ARGUMENTS:
-//   online      Re-enable BaR welders, reset idle clock
-//   offline     Force-disable BaR welders immediately
-//   info-only   Skip assembler queuing this cycle
+// Fully automated: no toolbar input required.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
 // USER SETTINGS
 // ---------------------------------------------------------------------------
-private const double IDLE_TIMEOUT_SECONDS  = 600.0;  // 10 min idle → auto-offline
-private const bool   AUTO_PRODUCE_FIX_MODE = true;   // auto-fix assembler mode
-private const double REINIT_INTERVAL       = 10.0;   // seconds between block rescans
-private const double ASSEMBLER_QUEUE_INTERVAL = 0.5; // seconds between production queue checks
+private const double DEFAULT_IDLE_TIMEOUT_SECONDS     = 600.0; // 10 min idle auto-offline
+private const double DEFAULT_REINIT_INTERVAL          = 10.0;  // seconds between block rescans
+private const double DEFAULT_ASSEMBLER_QUEUE_INTERVAL = 0.5;   // seconds between production queue checks
+private const double DEFAULT_BOOT_DURATION            = 6.0;   // seconds for boot animation
+private const bool   AUTO_PRODUCE_FIX_MODE            = true;  // auto-fix assembler mode
 
 // ---------------------------------------------------------------------------
 // COLOUR PALETTE
 // ---------------------------------------------------------------------------
-private readonly Color COL_BG        = new Color(  4,  8, 16);
-private readonly Color COL_ACCENT    = new Color(  0,180,255);
-private readonly Color COL_DIM       = new Color( 20, 60, 90);
-private readonly Color COL_WHITE     = new Color(220,235,255);
-private readonly Color COL_GREEN     = new Color(  0,220,100);
-private readonly Color COL_AMBER     = new Color(255,160,  0);
-private readonly Color COL_RED       = new Color(220, 30, 30);
-private readonly Color COL_HEADER_BG = new Color(  0, 40, 80);
-private readonly Color COL_BAR_BG    = new Color( 10, 25, 45);
-private readonly Color COL_BAR_FILL  = new Color(  0,160,220);
-private readonly Color COL_BAR_DONE  = new Color(  0,210, 90);
+private readonly Color COL_BG        = new Color(  0,  8, 18);
+private readonly Color COL_PANEL     = new Color(  0, 13, 28);
+private readonly Color COL_ACCENT    = new Color(  0,220,255);
+private readonly Color COL_ACCENT_DIM= new Color(  0, 85,120);
+private readonly Color COL_DIM       = new Color( 20, 95,135);
+private readonly Color COL_WHITE     = new Color(235,245,255);
+private readonly Color COL_GREEN     = new Color( 45,255,115);
+private readonly Color COL_AMBER     = new Color(255,175, 25);
+private readonly Color COL_RED       = new Color(255, 70, 70);
+private readonly Color COL_HEADER_BG = new Color(  0, 22, 42);
+private readonly Color COL_BAR_BG    = new Color(  0, 28, 48);
+private readonly Color COL_BAR_FILL  = new Color(  0,220,255);
+private readonly Color COL_BAR_DONE  = new Color( 45,255,115);
 
 // ---------------------------------------------------------------------------
 // LCD TAGS — one per page kind
@@ -142,22 +141,50 @@ private class BaRHandler
     { EnsureQueuedFn = null; }
 
     public bool AllowBuild
-    { get { return Welders.Count > 0 && Welders[0].GetValueBool("BuildAndRepair.AllowBuild"); } }
+    { get { return GetValue<bool>("BuildAndRepair.AllowBuild"); } }
 
     public IMySlimBlock CurrentTarget
-    { get { return GetValue<IMySlimBlock>("BuildAndRepair.CurrentTarget"); } }
+    { get { return FirstSlimValue("BuildAndRepair.CurrentTarget"); } }
 
     public IMySlimBlock CurrentGrindTarget
-    { get { return GetValue<IMySlimBlock>("BuildAndRepair.CurrentGrindTarget"); } }
+    { get { return FirstSlimValue("BuildAndRepair.CurrentGrindTarget"); } }
 
     public List<IMySlimBlock> PossibleTargets()
-    { return GetValue<List<IMySlimBlock>>("BuildAndRepair.PossibleTargets"); }
+    { return MergeListValue<IMySlimBlock>("BuildAndRepair.PossibleTargets"); }
 
     public List<IMySlimBlock> PossibleGrindTargets()
-    { return GetValue<List<IMySlimBlock>>("BuildAndRepair.PossibleGrindTargets"); }
+    { return MergeListValue<IMySlimBlock>("BuildAndRepair.PossibleGrindTargets"); }
 
     public List<IMyEntity> PossibleCollectTargets()
-    { return GetValue<List<IMyEntity>>("BuildAndRepair.PossibleCollectTargets"); }
+    { return MergeListValue<IMyEntity>("BuildAndRepair.PossibleCollectTargets"); }
+
+    private IMySlimBlock FirstSlimValue(string prop)
+    {
+        for (int i = 0; i < Welders.Count; i++)
+        {
+            try
+            {
+                var v = Welders[i].GetValue<IMySlimBlock>(prop);
+                if (v != null) return v;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private List<T> MergeListValue<T>(string prop)
+    {
+        var r = new List<T>();
+        for (int i = 0; i < Welders.Count; i++)
+        {
+            List<T> d = null;
+            try { d = Welders[i].GetValue<List<T>>(prop); } catch { }
+            if (d == null) continue;
+            for (int j = 0; j < d.Count; j++)
+                if (!r.Contains(d[j])) r.Add(d[j]);
+        }
+        return r;
+    }
 
     public Dictionary<MyDefinitionId, int> MissingComponents()
     {
@@ -184,7 +211,7 @@ private class BaRHandler
         if (EnsureQueuedFn == null)
             try { EnsureQueuedFn = Welders[0].GetValue<Func<IEnumerable<long>, MyDefinitionId, int, int>>("BuildAndRepair.ProductionBlock.EnsureQueued"); } catch { }
         if (EnsureQueuedFn == null) return -3;
-        return EnsureQueuedFn(ids, def, amt);
+        try { return EnsureQueuedFn(ids, def, amt); } catch { return -4; }
     }
 }
 
@@ -202,9 +229,13 @@ private bool                   _usingNanoBotTags = false;
 private double   _elapsed          = 0.0;
 private double   _nextReinit       = 0.0;
 private double   _nextAssembler    = 0.0;
+private double   _nextEcho         = 0.0;
 private double   _lastActivityTime = 0.0;
+private double   _idleTimeoutSeconds     = DEFAULT_IDLE_TIMEOUT_SECONDS;
+private double   _reinitInterval         = DEFAULT_REINIT_INTERVAL;
+private double   _assemblerQueueInterval = DEFAULT_ASSEMBLER_QUEUE_INTERVAL;
+private double   _bootDuration           = DEFAULT_BOOT_DURATION;
 private bool     _isOffline        = false;
-private bool     _forcedOffline    = false;
 private RNBState _state            = RNBState.Idle;
 private int      _drawTick         = 0;
 
@@ -215,6 +246,7 @@ private List<IMyEntity> _collectTargets = null;
 private Dictionary<MyDefinitionId, int> _missing = new Dictionary<MyDefinitionId, int>();
 private IMySlimBlock _currentTarget = null;
 private IMySlimBlock _currentGrindTarget = null;
+private string _lastStatusEcho = "";
 
 // Weld progress latch
 private int _weldPeak = 0;
@@ -224,7 +256,6 @@ private int _weldPrev = 0;
 private enum BootStage { Booting, Ready }
 private BootStage _bootStage    = BootStage.Booting;
 private double    _bootElapsed  = 0.0;
-private const double BOOT_DURATION = 1.0;   // seconds for boot animation
 private float     _bootProgress = 0f;
 private int       _bootDotCount = 0;
 private double    _bootDotTimer = 0.0;
@@ -254,6 +285,7 @@ private readonly string[] BASIC_COMPONENTS = new string[] {
 public Program()
 {
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    LoadPbConfig();
 
     // Grab the PB's own LCD surface (surface 0 on large PB)
     var pb = Me as IMyTextSurfaceProvider;
@@ -270,16 +302,16 @@ public Program()
 
 public void Save() { }
 
-public void Main(string argument, UpdateType updateSource)
+public void Main(string unused, UpdateType updateSource)
 {
     _elapsed     += Runtime.TimeSinceLastRun.TotalSeconds;
     _bootElapsed += Runtime.TimeSinceLastRun.TotalSeconds;
     bool pbBooting = _bootStage == BootStage.Booting;
 
-    // Boot sequence — run for BOOT_DURATION seconds, then switch to live
+    // Boot sequence - run for configured seconds, then switch to live
     if (pbBooting)
     {
-        _bootProgress = (float)(_bootElapsed / BOOT_DURATION);
+        _bootProgress = (float)(_bootElapsed / _bootDuration);
         if (_bootProgress > 1f) _bootProgress = 1f;
 
         // Animate dots every 0.4 s
@@ -289,7 +321,7 @@ public void Main(string argument, UpdateType updateSource)
         DrawBootScreen(_bootProgress);
         DrawBootDisplays(_bootProgress);
 
-        if (_bootElapsed >= BOOT_DURATION)
+        if (_bootElapsed >= _bootDuration)
         {
             _bootStage = BootStage.Ready;
             pbBooting = false;
@@ -300,25 +332,16 @@ public void Main(string argument, UpdateType updateSource)
         }
     }
 
-    if (!string.IsNullOrEmpty(argument))
-    {
-        string arg = argument.Trim().ToLower();
-        if (arg == "online")  { BringOnline(); }
-        if (arg == "offline") { _forcedOffline = true; BringOffline("Forced offline."); }
-        if (arg == "reinit")  { Initialise(); _nextReinit = _elapsed + REINIT_INTERVAL; Echo("REINIT complete."); }
-    }
-
     if (_elapsed >= _nextReinit)
     {
         Initialise();
-        _nextReinit = _elapsed + REINIT_INTERVAL;
+        _nextReinit = _elapsed + _reinitInterval;
     }
 
-    bool infoOnly = argument != null && argument.Trim().ToLower() == "info-only";
     RefreshBaRData();
     RefreshProjectors();
 
-    if (_isOffline && !_forcedOffline && _welders.CountEnabled > 0)
+    if (_isOffline && _welders.CountEnabled > 0)
     {
         _isOffline        = false;
         _lastActivityTime = _elapsed;
@@ -347,15 +370,15 @@ public void Main(string argument, UpdateType updateSource)
             _state = RNBState.Missing;
         else if (anyWork)
             _state = RNBState.Working;
-        else if (!_forcedOffline && (_elapsed - _lastActivityTime) >= IDLE_TIMEOUT_SECONDS)
+        else if ((_elapsed - _lastActivityTime) >= _idleTimeoutSeconds)
             BringOffline("Idle timeout.");
         else
             _state = RNBState.Idle;
     }
 
-    if (!infoOnly && _elapsed >= _nextAssembler)
+    if (_elapsed >= _nextAssembler)
     {
-        _nextAssembler = _elapsed + ASSEMBLER_QUEUE_INTERVAL;
+        _nextAssembler = _elapsed + _assemblerQueueInterval;
         CheckAssemblerQueues();
     }
 
@@ -370,6 +393,7 @@ public void Main(string argument, UpdateType updateSource)
 // ---------------------------------------------------------------------------
 private void Initialise()
 {
+    LoadPbConfig();
     _welders.Welders.Clear();
     _welders.ResetProductionCache();
     _assemblerIds.Clear();
@@ -391,7 +415,7 @@ private void Initialise()
         string n = tb.CustomName;
 
         // Assemblers — explicit basic tag overrides subtype detection
-        if (n.Contains(TAG_NANOBOT))
+        if (HasRnbRole(tb, TAG_NANOBOT, "NanoBot"))
         {
             var nw = tb as IMyShipWelder;
             if (nw != null && BaRHandler.IsBaRWelder(nw) && !_welders.Welders.Contains(nw))
@@ -401,8 +425,8 @@ private void Initialise()
             }
         }
 
-        bool hasBasicTag    = n.Contains(TAG_BASIC_ASSEMBLER);
-        bool hasAdvancedTag = !hasBasicTag && n.Contains(TAG_ASSEMBLER);
+        bool hasBasicTag    = HasRnbRole(tb, TAG_BASIC_ASSEMBLER, "BasicAssembler");
+        bool hasAdvancedTag = !hasBasicTag && HasRnbRole(tb, TAG_ASSEMBLER, "Assembler");
 
         if (hasBasicTag || hasAdvancedTag)
         {
@@ -435,14 +459,14 @@ private void Initialise()
         }
 
         // Alert lights
-        if (n.Contains(TAG_ALERT))
+        if (HasRnbRole(tb, TAG_ALERT, "Alert"))
         {
             var lt = tb as IMyLightingBlock;
             if (lt != null) _alertLights.Add(lt);
         }
 
         // Projectors
-        if (n.Contains(TAG_PROJECTOR))
+        if (HasRnbRole(tb, TAG_PROJECTOR, "Projector"))
         {
             var proj = tb as IMyProjector;
             if (proj != null)
@@ -458,7 +482,7 @@ private void Initialise()
 
         // LCDs — each tag maps directly to one PageKind
         PageKind lcdPage;
-        if (TagToPage(n, out lcdPage))
+        if (TagToPage(tb, n, out lcdPage))
         {
             var surf = tb as IMyTextSurface;
             if (surf != null)
@@ -487,33 +511,47 @@ private void Initialise()
         }
     }
 
-    string msg = "RNB v1.0 | Welders:" + _welders.Count
+    string msg = "Rev NanoBot Manager v1.0 | Welders:" + _welders.Count
         + (_usingNanoBotTags ? " tagged" : " auto")
         + " Asm:" + _assemblerIds.Count
         + " (B:" + _basicAssemblerIds.Count + " A:" + _advancedAssemblerIds.Count + ")"
         + " LCD:" + _displays.Count
         + " Proj:" + _projectors.Count;
-    Echo(msg);
-
-    // Extra: confirm each assembler found by name
-    if (_assemblerIds.Count > 0)
-    {
-        for (int i = 0; i < _assemblers.Count; i++)
-        {
-            var atb = _assemblers[i] as IMyTerminalBlock;
-            string aname = atb != null ? atb.CustomName : "?";
-            bool enabled = _assemblers[i].Enabled;
-            bool working = _assemblers[i].IsWorking;
-            string amode = _assemblers[i].Mode == MyAssemblerMode.Disassembly ? "DISASM" : "ASSEM";
-            Echo("  ASM: " + aname + " | " + amode + " | en=" + enabled + " wrk=" + working);
-        }
-    }
+    EchoStatus(msg);
 }
 
-// Maps a block name to a PageKind via LCD tags.
-// Returns false if the block has no LCD tag.
-private static bool TagToPage(string name, out PageKind page)
+private void EchoStatus(string msg)
 {
+    if (msg == _lastStatusEcho && _elapsed < _nextEcho) return;
+    _lastStatusEcho = msg;
+    _nextEcho = _elapsed + 30.0;
+    Echo(msg);
+}
+
+private void LoadPbConfig()
+{
+    _idleTimeoutSeconds     = ConfigDouble("AutoOfflineSeconds", DEFAULT_IDLE_TIMEOUT_SECONDS, 30.0, 86400.0);
+    _reinitInterval         = ConfigDouble("RescanSeconds", DEFAULT_REINIT_INTERVAL, 1.0, 3600.0);
+    _assemblerQueueInterval = ConfigDouble("AssemblerQueueSeconds", DEFAULT_ASSEMBLER_QUEUE_INTERVAL, 0.1, 60.0);
+    _bootDuration           = ConfigDouble("BootSeconds", DEFAULT_BOOT_DURATION, 0.5, 60.0);
+}
+
+private double ConfigDouble(string key, double fallback, double min, double max)
+{
+    string value = RnbDataValue(Me, key);
+    double d;
+    if (!double.TryParse(value, out d)) return fallback;
+    if (d < min) return min;
+    if (d > max) return max;
+    return d;
+}
+
+// Maps LCD Custom Data or name tag to a PageKind.
+private static bool TagToPage(IMyTerminalBlock block, string name, out PageKind page)
+{
+    string pageValue = RnbDataValue(block, "Page");
+    if (TryParsePage(pageValue, out page)) return true;
+
     // Check longest/most-specific tags first to avoid substring false-matches
     if (name.Contains(TAG_LCD_ASSEMBLERS)) { page = PageKind.Assemblers; return true; }
     if (name.Contains(TAG_LCD_PROJECTORS)) { page = PageKind.Projectors; return true; }
@@ -526,11 +564,83 @@ private static bool TagToPage(string name, out PageKind page)
     return false;
 }
 
+private static bool HasRnbRole(IMyTerminalBlock block, string nameTag, string role)
+{
+    if (block.CustomName.Contains(nameTag)) return true;
+    string roles = RnbDataValue(block, "Role");
+    if (string.IsNullOrEmpty(roles)) return false;
+    roles = roles.Replace(";", ",");
+    string[] parts = roles.Split(',');
+    for (int i = 0; i < parts.Length; i++)
+    {
+        string r = parts[i].Trim();
+        if (r.Equals(role, System.StringComparison.OrdinalIgnoreCase)) return true;
+    }
+    return false;
+}
+
+private static bool TryParsePage(string value, out PageKind page)
+{
+    page = PageKind.Status;
+    if (string.IsNullOrEmpty(value)) return false;
+
+    string v = value.Trim();
+    if (v.Equals("Status",     System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Status;     return true; }
+    if (v.Equals("Missing",    System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Missing;    return true; }
+    if (v.Equals("Weld",       System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Weld;       return true; }
+    if (v.Equals("Grind",      System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Grind;      return true; }
+    if (v.Equals("Welders",    System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Welders;    return true; }
+    if (v.Equals("Assemblers", System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Assemblers; return true; }
+    if (v.Equals("Projectors", System.StringComparison.OrdinalIgnoreCase)) { page = PageKind.Projectors; return true; }
+    return false;
+}
+
+private static string RnbDataValue(IMyTerminalBlock block, string key)
+{
+    string data = block.CustomData;
+    if (string.IsNullOrEmpty(data)) return "";
+
+    bool inSection = false;
+    string[] lines = data.Replace("\r", "").Split('\n');
+    for (int i = 0; i < lines.Length; i++)
+    {
+        string line = lines[i].Trim();
+        if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
+
+        if (line.StartsWith("[") && line.EndsWith("]"))
+        {
+            string section = line.Substring(1, line.Length - 2).Trim();
+            inSection = section.Equals("RNB", System.StringComparison.OrdinalIgnoreCase);
+            continue;
+        }
+
+        if (!inSection) continue;
+
+        int eq = line.IndexOf('=');
+        if (eq < 1) continue;
+
+        string k = line.Substring(0, eq).Trim();
+        if (!k.Equals(key, System.StringComparison.OrdinalIgnoreCase)) continue;
+
+        string v = line.Substring(eq + 1).Trim();
+        int comment = v.IndexOf('#');
+        if (comment >= 0) v = v.Substring(0, comment).Trim();
+        comment = v.IndexOf(';');
+        if (comment >= 0) v = v.Substring(0, comment).Trim();
+        return v;
+    }
+    return "";
+}
+
 private void PrepSurface(IMyTextSurface s)
 {
     s.ContentType           = ContentType.SCRIPT;
     s.ScriptBackgroundColor = COL_BG;
     s.BackgroundColor       = COL_BG;
+    s.ScriptForegroundColor = COL_ACCENT;
+    s.Font                  = "Monospace";
+    s.FontSize              = 1.0f;
+    s.TextPadding           = 1f;
     s.Script                = "";
 }
 
@@ -580,16 +690,6 @@ private void BringOffline(string reason)
     _state     = RNBState.Offline;
     _welders.SetEnabled(false);
     Echo("OFFLINE: " + reason);
-}
-
-private void BringOnline()
-{
-    _isOffline        = false;
-    _forcedOffline    = false;
-    _lastActivityTime = _elapsed;
-    _state            = RNBState.Idle;
-    _welders.SetEnabled(true);
-    Echo("ONLINE.");
 }
 
 // ---------------------------------------------------------------------------
@@ -688,12 +788,75 @@ private void UpdateAlertLights()
 private void DrawDisplays()
 {
     for (int i = 0; i < _displays.Count; i++)
-        DrawPage(_displays[i]);
+        DrawPageClean(_displays[i]);
 }
 
 // ---------------------------------------------------------------------------
 // PAGE FRAME — header + footer, content delegated
 // ---------------------------------------------------------------------------
+private void DrawPageClean(DisplayEntry entry)
+{
+    var s = entry.Surface;
+    if (s == null) return;
+    PrepSurface(s);
+
+    RectangleF vp = Viewport(s);
+    RectangleF panel = Inset(vp, 10f);
+    float pad = 18f;
+    float ix = panel.X + pad;
+    float right = panel.Right - pad;
+    float iw = panel.Width - pad * 2f;
+
+    using (var frame = s.DrawFrame())
+    {
+        Fill(frame, vp, COL_BG);
+        Fill(frame, panel, COL_PANEL);
+        DrawBorder(frame, panel, COL_ACCENT, 3f);
+
+        DrawText(frame, "RNB v1.0  |  Rev NanoBot Manager",
+            ix, panel.Y + 18f, 0.42f, COL_ACCENT, TextAlignment.LEFT);
+
+        string stateStr; Color stateCol;
+        switch (_state)
+        {
+            case RNBState.Working: stateStr = "WORKING"; stateCol = COL_GREEN; break;
+            case RNBState.Missing: stateStr = "MISSING"; stateCol = COL_RED;   break;
+            case RNBState.Offline: stateStr = "OFFLINE"; stateCol = COL_AMBER; break;
+            default:               stateStr = "IDLE";    stateCol = COL_WHITE; break;
+        }
+
+        float row2Y = panel.Y + 46f;
+        DrawText(frame, "Welders: " + _welders.CountWorking + "/" + _welders.Count,
+            ix, row2Y, 0.36f, COL_DIM, TextAlignment.LEFT);
+        DrawText(frame, "LIVE", panel.X + panel.Width * 0.54f, row2Y, 0.34f, COL_GREEN, TextAlignment.LEFT);
+        DrawProgressBar(frame, panel.X + panel.Width * 0.63f, row2Y + 3f, panel.Width * 0.16f, 7f,
+            (_drawTick % 80) / 80f, COL_BAR_FILL);
+        DrawText(frame, "[ " + stateStr + " ]", right, row2Y, 0.38f, stateCol, TextAlignment.RIGHT);
+        DrawRect(frame, panel.X + panel.Width * 0.5f, panel.Y + 70f, iw, 1f, COL_ACCENT);
+
+        float cTop = panel.Y + 84f;
+        float cH = panel.Height - 122f;
+        switch (entry.Page)
+        {
+            case PageKind.Status:     DrawStatusPage    (frame, panel.X, cTop, panel.Width, cH); break;
+            case PageKind.Missing:    DrawMissingPage   (frame, panel.X, cTop, panel.Width, cH); break;
+            case PageKind.Weld:       DrawListPage      (frame, panel.X, cTop, panel.Width, cH, "WELD QUEUE",  _weldTargets);  break;
+            case PageKind.Grind:      DrawListPage      (frame, panel.X, cTop, panel.Width, cH, "GRIND QUEUE", _grindTargets); break;
+            case PageKind.Welders:    DrawWeldersPage   (frame, panel.X, cTop, panel.Width, cH); break;
+            case PageKind.Assemblers: DrawAssemblersPage(frame, panel.X, cTop, panel.Width, cH); break;
+            case PageKind.Projectors: DrawProjectorsPage(frame, panel.X, cTop, panel.Width, cH); break;
+        }
+
+        float footerY = panel.Bottom - 20f;
+        DrawRect(frame, panel.X + panel.Width * 0.5f, footerY - 8f, iw, 1f, COL_DIM);
+        DrawText(frame, PageLabel(entry.Page), ix, footerY, 0.36f, COL_DIM, TextAlignment.LEFT);
+        double idleSec = _elapsed - _lastActivityTime;
+        string idleStr = _isOffline ? "OFFLINE" : ("IDLE " + FormatTime(idleSec));
+        DrawText(frame, idleStr, right, footerY, 0.36f,
+            _isOffline ? COL_AMBER : COL_DIM, TextAlignment.RIGHT);
+    }
+}
+
 private void DrawPage(DisplayEntry entry)
 {
     var s  = entry.Surface;
@@ -707,19 +870,18 @@ private void DrawPage(DisplayEntry entry)
     {
         // Background
         DrawRect(frame, ox + W/2f, oy + H/2f, W, H, COL_BG);
+        DrawPanelFrame(frame, ox + 8f, oy + 8f, W - 16f, H - 16f, COL_DIM);
 
         // Side rails
-        DrawRect(frame, ox + 3f,     oy + H/2f, 3f, H, COL_DIM);
-        DrawRect(frame, ox + W - 3f, oy + H/2f, 3f, H, COL_DIM);
+        DrawPanelFrame(frame, ox + 6f, oy + 6f, W - 12f, H - 12f, COL_ACCENT);
 
         // Header — row1: title | row2: state + welder count
-        float row1H   = 28f;
-        float row2H   = 22f;
-        float headerH = row1H + row2H + 4f;
-        DrawRect(frame, ox + W/2f, oy + headerH/2f, W, headerH, COL_HEADER_BG);
+        float pad = 18f;
+        float ix  = ox + pad;
+        float iw  = W - pad * 2f;
 
-        DrawText(frame, "RNB v1.0  |  Rev's Nanobot Bridge",
-            ox + 12f, oy + 4f, 0.52f, COL_ACCENT, TextAlignment.LEFT);
+        DrawText(frame, "RNB v1.0  |  Rev NanoBot Manager",
+            ix, oy + 18f, 0.42f, COL_ACCENT, TextAlignment.LEFT);
 
         string stateStr; Color stateCol;
         switch (_state)
@@ -729,19 +891,20 @@ private void DrawPage(DisplayEntry entry)
             case RNBState.Offline: stateStr = "OFFLINE"; stateCol = COL_AMBER; break;
             default:               stateStr = "IDLE";    stateCol = COL_WHITE; break;
         }
-        float row2Y = oy + row1H + 4f;
+        float row2Y = oy + 46f;
         DrawText(frame, "Welders: " + _welders.CountWorking + "/" + _welders.Count,
-            ox + 12f, row2Y, 0.45f, COL_DIM, TextAlignment.LEFT);
+            ix, row2Y, 0.36f, COL_DIM, TextAlignment.LEFT);
+        DrawText(frame, "LIVE", ox + W * 0.54f, row2Y, 0.34f, COL_GREEN, TextAlignment.LEFT);
+        float pulse = (_drawTick % 80) / 80f;
+        DrawProgressBar(frame, ox + W * 0.63f, row2Y + 3f, W * 0.16f, 7f, pulse, COL_BAR_FILL);
         DrawText(frame, "[ " + stateStr + " ]",
-            ox + W - 12f, row2Y, 0.45f, stateCol, TextAlignment.RIGHT);
-        DrawText(frame, "LIVE " + _drawTick.ToString().PadLeft(3, '0'),
-            ox + W/2f, row2Y, 0.38f, COL_ACCENT, TextAlignment.CENTER);
+            ox + W - pad, row2Y, 0.38f, stateCol, TextAlignment.RIGHT);
 
-        DrawRect(frame, ox + W/2f, oy + headerH + 1f, W, 2f, COL_ACCENT);
+        DrawRect(frame, ox + W/2f, oy + 70f, iw, 1f, COL_ACCENT);
 
         // Content
-        float cTop = oy + headerH + 8f;
-        float cH   = H - headerH - 28f;
+        float cTop = oy + 84f;
+        float cH   = H - 122f;
 
         switch (entry.Page)
         {
@@ -755,12 +918,12 @@ private void DrawPage(DisplayEntry entry)
         }
 
         // Footer
-        float footerY = oy + H - 20f;
-        DrawRect(frame, ox + W/2f, footerY - 4f, W, 1f, COL_DIM);
-        DrawText(frame, PageLabel(entry.Page), ox + 12f, footerY, 0.4f, COL_DIM, TextAlignment.LEFT);
+        float footerY = oy + H - 30f;
+        DrawRect(frame, ox + W/2f, footerY - 6f, iw, 1f, COL_DIM);
+        DrawText(frame, PageLabel(entry.Page), ix, footerY, 0.36f, COL_DIM, TextAlignment.LEFT);
         double idleSec = _elapsed - _lastActivityTime;
         string idleStr = _isOffline ? "OFFLINE" : ("IDLE " + FormatTime(idleSec));
-        DrawText(frame, idleStr, ox + W - 12f, footerY, 0.4f,
+        DrawText(frame, idleStr, ox + W - pad, footerY, 0.36f,
             _isOffline ? COL_AMBER : COL_DIM, TextAlignment.RIGHT);
     }
 }
@@ -1088,13 +1251,54 @@ private void DrawBootScreen(float progress)
 {
     if (_pbSurface == null) return;
 
-    DrawBootSurface(_pbSurface, progress, true);
+    DrawBootSurfaceClean(_pbSurface, progress, true);
 }
 
 private void DrawBootDisplays(float progress)
 {
     for (int i = 0; i < _displays.Count; i++)
-        DrawBootSurface(_displays[i].Surface, progress, false);
+        DrawBootSurfaceClean(_displays[i].Surface, progress, false);
+}
+
+private void DrawBootSurfaceClean(IMyTextSurface s, float progress, bool compact)
+{
+    if (s == null) return;
+    PrepSurface(s);
+    if (progress < 0f) progress = 0f;
+    if (progress > 1f) progress = 1f;
+
+    RectangleF vp = Viewport(s);
+    RectangleF panel = Inset(vp, compact ? 10f : 12f);
+    Vector2 center = panel.Position + panel.Size * 0.5f;
+
+    using (var frame = s.DrawFrame())
+    {
+        Fill(frame, vp, COL_BG);
+        Fill(frame, panel, COL_PANEL);
+        DrawBorder(frame, panel, COL_ACCENT, compact ? 2f : 3f);
+
+        float titleY = panel.Y + panel.Height * (compact ? 0.30f : 0.28f);
+        DrawText(frame, "RNB", center.X, titleY, compact ? 0.88f : 1.65f, COL_ACCENT, TextAlignment.CENTER);
+        DrawText(frame, "Rev NanoBot Manager", center.X, titleY + (compact ? 24f : 52f),
+            compact ? 0.28f : 0.52f, COL_WHITE, TextAlignment.CENTER);
+        DrawText(frame, "v1.0  |  RevGamer", center.X, titleY + (compact ? 42f : 84f),
+            compact ? 0.24f : 0.40f, COL_ACCENT, TextAlignment.CENTER);
+
+        float barW = Math.Min(panel.Width * (compact ? 0.54f : 0.66f), compact ? 132f : 430f);
+        float barH = compact ? 8f : 14f;
+        RectangleF bar = new RectangleF(center.X - barW * 0.5f, center.Y + (compact ? 24f : 58f), barW, barH);
+        Fill(frame, bar, COL_BAR_BG);
+        Fill(frame, new RectangleF(bar.X, bar.Y, bar.Width * progress, bar.Height),
+            progress >= 1f ? COL_GREEN : COL_BAR_FILL);
+
+        string dots = new string('.', _bootDotCount);
+        string bootMsg = progress >= 1f ? "READY" : ("INITIALISING" + dots);
+        Color bootCol = progress >= 1f ? COL_GREEN : COL_WHITE;
+        DrawText(frame, bootMsg, center.X, bar.Bottom + (compact ? 12f : 28f),
+            compact ? 0.28f : 0.52f, bootCol, TextAlignment.CENTER);
+        DrawText(frame, (int)(progress * 100f) + "%", center.X, bar.Bottom + (compact ? 28f : 58f),
+            compact ? 0.24f : 0.44f, COL_ACCENT, TextAlignment.CENTER);
+    }
 }
 
 private void DrawBootSurface(IMyTextSurface s, float progress, bool compact)
@@ -1109,37 +1313,39 @@ private void DrawBootSurface(IMyTextSurface s, float progress, bool compact)
     {
         // Background
         DrawRect(frame, ox + W/2f, oy + H/2f, W, H, COL_BG);
+        float cx = ox + W/2f;
 
-        // Top accent bar
-        DrawRect(frame, ox + W/2f, oy + 4f, W, 3f, COL_ACCENT);
+        // Keep boot clean: no frame or divider on PB/wall LCD boot screens.
+
 
         // Logo / title block — centred
-        float midY = compact ? oy + H * 0.28f : oy + H * 0.24f;
-        DrawText(frame, "RNB", ox + W/2f, midY, compact ? 1.8f : 1.35f, COL_ACCENT, TextAlignment.CENTER);
-        DrawText(frame, "Rev's Nanobot Bridge",
-            ox + W/2f, midY + (compact ? 52f : 42f), compact ? 0.48f : 0.52f, COL_WHITE, TextAlignment.CENTER);
-        DrawText(frame, "v1.0  |  505th Expeditionary Force",
-            ox + W/2f, midY + (compact ? 76f : 68f), 0.38f, COL_DIM, TextAlignment.CENTER);
+        float titleY = compact ? oy + H * 0.30f : oy + H * 0.31f;
+        DrawText(frame, "RNB", cx, titleY, compact ? 0.92f : 1.75f, COL_ACCENT, TextAlignment.CENTER);
+        DrawText(frame, "Rev NanoBot Manager",
+            cx, titleY + (compact ? 25f : 56f), compact ? 0.28f : 0.55f, COL_WHITE, TextAlignment.CENTER);
+        DrawText(frame, "v1.0  |  RevGamer",
+            cx, titleY + (compact ? 42f : 92f), compact ? 0.24f : 0.42f, COL_ACCENT, TextAlignment.CENTER);
 
-        // Divider
-        DrawRect(frame, ox + W/2f, oy + H * 0.55f, W * 0.7f, 1f, COL_DIM);
 
         // Boot progress bar
-        float barW  = W * 0.7f;
-        float barX  = ox + (W - barW) / 2f;
-        float barY  = oy + H * 0.6f;
-        DrawProgressBar(frame, barX, barY, barW, 16f, progress,
+        float barW  = W * (compact ? 0.38f : 0.52f);
+        float maxBarW = compact ? 140f : 460f;
+        if (barW > maxBarW) barW = maxBarW;
+        float barX  = cx - barW/2f;
+        float barY  = oy + H * (compact ? 0.57f : 0.60f);
+        float barH  = compact ? 8f : 18f;
+        DrawBootProgressBar(frame, barX, barY, barW, barH, progress,
             progress >= 1f ? COL_GREEN : COL_BAR_FILL);
 
         // Status text with animated dots
         string dots = new string('.', _bootDotCount);
         string bootMsg = progress >= 1f ? "READY" : ("INITIALISING" + dots);
         Color  bootCol = progress >= 1f ? COL_GREEN : COL_WHITE;
-        DrawText(frame, bootMsg, ox + W/2f, barY + 24f, 0.48f, bootCol, TextAlignment.CENTER);
-        DrawText(frame, (int)(progress * 100f) + "%", ox + W/2f, barY + 48f, 0.42f, COL_ACCENT, TextAlignment.CENTER);
+        DrawText(frame, bootMsg, cx, barY + barH + (compact ? 13f : 28f),
+            compact ? 0.28f : 0.52f, bootCol, TextAlignment.CENTER);
+        DrawText(frame, (int)(progress * 100f) + "%", cx, barY + barH + (compact ? 29f : 62f),
+            compact ? 0.24f : 0.44f, COL_ACCENT, TextAlignment.CENTER);
 
-        // Bottom accent bar
-        DrawRect(frame, ox + W/2f, oy + H - 4f, W, 3f, COL_ACCENT);
     }
 }
 
@@ -1161,10 +1367,10 @@ private void DrawPBScreen()
     {
         // Background
         DrawRect(frame, ox + W/2f, oy + H/2f, W, H, COL_BG);
+        DrawPanelFrame(frame, ox + 8f, oy + 8f, W - 16f, H - 16f, COL_DIM);
 
         // Header bar
-        DrawRect(frame, ox + W/2f, oy + 18f, W, 32f, COL_HEADER_BG);
-        DrawText(frame, "RNB v1.0", ox + 10f, oy + 4f, 0.55f, COL_ACCENT, TextAlignment.LEFT);
+        DrawText(frame, "Rev NanoBot Manager", ox + 18f, oy + 18f, 0.58f, COL_ACCENT, TextAlignment.LEFT);
 
         // State badge
         string stStr; Color stCol;
@@ -1176,34 +1382,35 @@ private void DrawPBScreen()
             default:               stStr = "IDLE";    stCol = COL_WHITE;  break;
         }
         DrawText(frame, "[ " + stStr + " ]",
-            ox + W - 10f, oy + 4f, 0.55f, stCol, TextAlignment.RIGHT);
+            ox + W - 52f, oy + 18f, 0.55f, stCol, TextAlignment.RIGHT);
+        DrawText(frame, _welders.CountWorking + "/" + _welders.Count,
+            ox + W - 16f, oy + 18f, 0.55f, _welders.CountWorking > 0 ? COL_GREEN : COL_AMBER, TextAlignment.RIGHT);
 
         // Accent line
-        DrawRect(frame, ox + W/2f, oy + 34f, W, 2f, COL_ACCENT);
+        DrawRect(frame, ox + W/2f, oy + 54f, W - 32f, 1f, COL_ACCENT);
+        DrawText(frame, "Welders", ox + 22f, oy + 78f, 0.78f, COL_WHITE, TextAlignment.LEFT);
+        DrawRect(frame, ox + W/2f, oy + 116f, W - 40f, 1f, COL_ACCENT);
 
         // Stats grid — compact two-column
-        float y  = oy + 42f;
-        float lx = ox + 10f;
-        float vx = ox + W - 10f;
-        float fs = 0.45f;
-        float rh = 18f;
+        float y  = oy + 140f;
+        float lx = ox + 28f;
+        float vx = ox + W - 48f;
+        float fs = 0.62f;
+        float rh = 34f;
 
         int wtc = _weldTargets != null ? _weldTargets.Count : 0;
         int gtc = _grindTargets != null ? _grindTargets.Count : 0;
 
-        DrawRow(frame, lx, vx, y, fs, "Welders",
-            _welders.CountWorking + "/" + _welders.Count,
-            _welders.CountWorking > 0 ? COL_GREEN : COL_AMBER); y += rh;
-        DrawRow(frame, lx, vx, y, fs, "Assemblers",
+        DrawOverviewRow(frame, lx, vx, y, fs, "Assemblers",
             "B:" + _basicAssemblerIds.Count + " A:" + _advancedAssemblerIds.Count,
             COL_WHITE); y += rh;
-        DrawRow(frame, lx, vx, y, fs, "Weld Q",
+        DrawOverviewRow(frame, lx, vx, y, fs, "Weld Queue",
             wtc.ToString(), wtc > 0 ? COL_WHITE : COL_DIM); y += rh;
-        DrawRow(frame, lx, vx, y, fs, "Grind Q",
+        DrawOverviewRow(frame, lx, vx, y, fs, "Grind Queue",
             gtc.ToString(), gtc > 0 ? COL_WHITE : COL_DIM); y += rh;
-        DrawRow(frame, lx, vx, y, fs, "Missing",
+        DrawOverviewRow(frame, lx, vx, y, fs, "Missing",
             _missing.Count.ToString(), _missing.Count > 0 ? COL_RED : COL_GREEN); y += rh;
-        DrawRow(frame, lx, vx, y, fs, "Projectors",
+        DrawOverviewRow(frame, lx, vx, y, fs, "Projectors",
             _projectors.Count.ToString(),
             _projectors.Count > 0 ? COL_ACCENT : COL_DIM); y += rh;
 
@@ -1213,19 +1420,19 @@ private void DrawPBScreen()
             int   built = _weldPeak - wtc;
             if (built < 0) built = 0;
             float pct   = (float)built / (float)_weldPeak;
-            DrawRect(frame, ox + W/2f, y, W, 1f, COL_DIM); y += 4f;
-            DrawProgressBar(frame, ox + 10f, y, W - 20f, 10f, pct,
+            DrawRect(frame, ox + W/2f, y + 6f, W - 40f, 1f, COL_DIM); y += 14f;
+            DrawProgressBar(frame, ox + 22f, y, W - 44f, 12f, pct,
                 pct >= 1f ? COL_BAR_DONE : COL_BAR_FILL);
             y += 14f;
         }
 
         // Footer — idle timer
-        DrawRect(frame, ox + W/2f, oy + H - 18f, W, 1f, COL_DIM);
+        DrawRect(frame, ox + W/2f, oy + H - 34f, W - 40f, 1f, COL_DIM);
         double idleSec = _elapsed - _lastActivityTime;
         string idleStr = _isOffline ? "OFFLINE" : ("IDLE " + FormatTime(idleSec));
-        DrawText(frame, idleStr, ox + W - 10f, oy + H - 16f, 0.38f,
+        DrawText(frame, idleStr, ox + W - 18f, oy + H - 26f, 0.36f,
             _isOffline ? COL_AMBER : COL_DIM, TextAlignment.RIGHT);
-        DrawText(frame, "505th RNB", ox + 10f, oy + H - 16f, 0.38f,
+        DrawText(frame, "REV Systems", ox + 18f, oy + H - 26f, 0.36f,
             COL_DIM, TextAlignment.LEFT);
     }
 }
@@ -1247,17 +1454,64 @@ private void DrawProgressBar(MySpriteDrawFrame f,
     DrawRect(f, x + 1f + fw/2f, y + h/2f, fw, h - 2f, fillCol);
 }
 
+private void DrawBootProgressBar(MySpriteDrawFrame f,
+    float x, float y, float w, float h, float pct, Color fillCol)
+{
+    if (pct < 0f) pct = 0f;
+    if (pct > 1f) pct = 1f;
+
+    DrawRect(f, x + w/2f, y + h/2f, w, h, COL_BAR_BG);
+    if (pct <= 0f) return;
+
+    float fw = w * pct;
+    DrawRect(f, x + fw/2f, y + h/2f, fw, h, fillCol);
+}
+
+private void DrawPanelFrame(MySpriteDrawFrame f, float x, float y, float w, float h, Color col)
+{
+    float cut = 22f;
+    DrawRect(f, x + w/2f,     y,          w - cut * 2f, 2f, col);
+    DrawRect(f, x + w/2f,     y + h,      w - cut * 2f, 2f, col);
+    DrawRect(f, x,            y + h/2f,   2f, h - cut * 2f, col);
+    DrawRect(f, x + w,        y + h/2f,   2f, h - cut * 2f, col);
+    DrawRect(f, x + cut/2f,   y + cut/2f, cut, 2f, col);
+    DrawRect(f, x + w-cut/2f, y + cut/2f, cut, 2f, col);
+    DrawRect(f, x + cut/2f,   y + h-cut/2f, cut, 2f, col);
+    DrawRect(f, x + w-cut/2f, y + h-cut/2f, cut, 2f, col);
+}
+
+private RectangleF Viewport(IMyTextSurface s)
+{
+    return new RectangleF((s.TextureSize - s.SurfaceSize) * 0.5f, s.SurfaceSize);
+}
+
+private RectangleF Inset(RectangleF r, float amount)
+{
+    return new RectangleF(r.X + amount, r.Y + amount, r.Width - amount * 2f, r.Height - amount * 2f);
+}
+
+private void Fill(MySpriteDrawFrame f, RectangleF r, Color col)
+{
+    DrawRect(f, r.X + r.Width * 0.5f, r.Y + r.Height * 0.5f, r.Width, r.Height, col);
+}
+
+private void DrawBorder(MySpriteDrawFrame f, RectangleF r, Color col, float t)
+{
+    Fill(f, new RectangleF(r.X, r.Y, r.Width, t), col);
+    Fill(f, new RectangleF(r.X, r.Bottom - t, r.Width, t), col);
+    Fill(f, new RectangleF(r.X, r.Y, t, r.Height), col);
+    Fill(f, new RectangleF(r.Right - t, r.Y, t, r.Height), col);
+}
+
 private void DrawRect(MySpriteDrawFrame f,
     float cx, float cy, float w, float h, Color col)
 {
-    var sp = new MySprite();
-    sp.Type            = SpriteType.TEXTURE;
-    sp.Data            = "SquareSimple";
-    sp.Position        = new Vector2(cx, cy);
-    sp.Size            = new Vector2(w,  h);
-    sp.Color           = col;
-    sp.RotationOrScale = 0f;
-    f.Add(sp);
+    f.Add(new MySprite(
+        SpriteType.TEXTURE,
+        "SquareSimple",
+        new Vector2(cx, cy),
+        new Vector2(w, h),
+        col));
 }
 
 private void DrawText(MySpriteDrawFrame f, string text,
@@ -1279,6 +1533,14 @@ private void DrawRow(MySpriteDrawFrame f, float lx, float vx, float y,
 {
     DrawText(f, label, lx, y, fs, COL_WHITE, TextAlignment.LEFT);
     DrawText(f, value, vx, y, fs, valCol,    TextAlignment.RIGHT);
+}
+
+private void DrawOverviewRow(MySpriteDrawFrame f, float lx, float vx, float y,
+    float fs, string label, string value, Color valCol)
+{
+    DrawText(f, label, lx, y, fs, COL_WHITE, TextAlignment.LEFT);
+    DrawText(f, value, vx, y, fs, valCol, TextAlignment.RIGHT);
+    DrawRect(f, vx + 24f, y + 10f, 8f, 8f, valCol);
 }
 
 // ---------------------------------------------------------------------------

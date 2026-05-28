@@ -1,8 +1,8 @@
 # RNB-Claude.md — AI Agent Instructions
 
 Guidelines for AI coding agents working on `RNB.cs`.  
-Script: **RNB — Rev's Nanobot Bridge v1.0.0**  
-Author: Simba 'Davy' Jones — 505th Expeditionary Force
+Script: **RNB — Rev NanoBot Manager v1.0.0**
+Author: RevGamer
 
 ---
 
@@ -24,12 +24,12 @@ Read `SE-SCRIPTING-RULES.md` before any edit — authoritative on whitelisted AP
 
 ```
 Program()                Constructor — grabs PB surface, calls Initialise(), draws boot
-Main(arg, src)           Entry point every ~167ms (Update10)
-  └─ Boot stage          Runs DrawBootScreen() for BOOT_DURATION seconds, then sets Ready
+Main(unused, src)        Entry point every ~167ms (Update10); no toolbar input is used
+  └─ Boot stage          Runs DrawBootScreen() for configured boot seconds, then sets Ready
   └─ Normal stage        State update → RefreshProjectors → CheckAssemblerQueues
                          → UpdateAlertLights → DrawDisplays → DrawPBScreen
 
-Initialise()             Full block scan by tag, runs every REINIT_INTERVAL seconds
+Initialise()             Loads PB config, scans Custom Data roles/pages and name-tag fallbacks
 TagToPage()              Maps block name to PageKind via LCD tag constants
 RefreshProjectors()      Updates ProjectorInfo each tick from TotalBlocks/RemainingBlocks
 RefreshBaRData()         Reads BaR mod state once per tick for state/pages/queueing
@@ -51,7 +51,30 @@ DrawProjectorsPage()     Per-projector build progress
 
 ---
 
-## Block Tags
+## Custom Data And Name Tags
+
+Preferred block configuration is Custom Data:
+
+```ini
+[RNB]
+Role=Assembler
+Page=Status
+```
+
+PB Custom Data supports:
+
+```ini
+[RNB]
+BootSeconds=6
+RescanSeconds=10
+AssemblerQueueSeconds=0.5
+AutoOfflineSeconds=600
+```
+
+Valid roles are `Assembler`, `BasicAssembler`, `NanoBot`, `Alert`, and `Projector`.
+Valid pages are `Status`, `Missing`, `Weld`, `Grind`, `Welders`, `Assemblers`, and `Projectors`.
+
+Name tags below remain fallback-compatible.
 
 | Constant | Value | Purpose |
 |---|---|---|
@@ -98,7 +121,6 @@ BaR welders can be explicitly tagged `[NanoBot]`. If any valid `[NanoBot]` welde
 | `_bootProgress` | `float` | 0–1 boot bar fill |
 | `_state` | `RNBState` | Working / Idle / Offline / Missing |
 | `_isOffline` | `bool` | True when welders disabled |
-| `_forcedOffline` | `bool` | Set by `offline` arg; only cleared by `online` |
 | `_weldPeak` | `int` | Peak weld queue count for progress bar |
 | `_weldPrev` | `int` | Previous tick queue count — detects new job |
 | `_elapsed` | `double` | Accumulated seconds since script start |
@@ -125,7 +147,7 @@ CheckAssemblerQueues()
 `BASIC_COMPONENTS[]` — vanilla subtypes a basic assembler can produce:
 `SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube, Motor, Display, BulletproofGlass, Girder`
 
-`ASSEMBLER_QUEUE_INTERVAL` controls how often production queueing runs. Default is 0.5 seconds for responsive missing-part production without running every Update10 tick.
+`AssemblerQueueSeconds` in PB Custom Data controls how often production queueing runs. Default is 0.5 seconds for responsive missing-part production without running every Update10 tick.
 
 ---
 

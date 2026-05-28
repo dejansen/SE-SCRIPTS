@@ -1,238 +1,173 @@
-# RNB — Rev's Nanobot Bridge
+# RNB - Rev NanoBot Manager
 
-A companion script for the **SKO Nanobot Build and Repair System (Maintained)** mod (v2.5.0+).  
-Compatible with SKO's maintained fork only. **Will not work** with the original Dummy08 version.
-
-Author: Simba 'Davy' Jones — 505th Expeditionary Force  
+Author: RevGamer
 Version: v1.0.0
 
----
+RNB is a Space Engineers Programmable Block script for the **SKO Nanobot Build and Repair System (Maintained)** mod. It monitors BaR/NanoBot welders, queues missing parts into assemblers, tracks projectors, drives LCD pages, and shows a PB boot/live screen automatically.
 
-## What It Does
+## Quick Setup
 
-| Feature | Detail |
-|---|---|
-| BaR welder monitoring | Auto-detects all BaR welders on the construct — no config needed |
-| Explicit Nanobot tag | `[NanoBot]` can select exactly which BaR blocks RNB monitors |
-| Assembler auto-queuing | Pushes missing components into tagged assemblers automatically on a fast throttled interval |
-| Smart assembler routing | Basic assemblers only receive components they can produce; advanced handle the rest |
-| Auto-produce mode fix | Switches assemblers out of Disassembly mode automatically when parts are missing |
-| Boot sequence | Animated boot screen on PB and tagged RNB LCDs on compile/reboot |
-| PB live screen | Compact status display on PB surface — no tag needed, always on |
-| Styled LCD pages | Sprite-mode display, dark navy theme, one fixed page per LCD |
-| Welder details | Per-welder: working/standby/off/damaged, mode, reason, BaR vs standard, on-target indicator |
-| Assembler details | Per-assembler: mode, enabled state, output count, repeat flag, cooperative flag |
-| Projector tracking | Build progress bar and remaining block count per projector |
-| Weld progress bar | Latches peak queue count at job start, fills as blocks complete |
-| Alert lights | Colour and blink rate reflects current system state |
-| Auto-offline | Disables BaR welders after 10 min of zero activity |
-| Argument control | `online` / `offline` / `info-only` / `reinit` via toolbar or timer block |
+1. Place a Programmable Block on the same construct as the BaR welders.
+2. Paste `RNB.cs` into the PB and click **Check Code**.
+3. Add RNB roles/pages with either block names or Custom Data.
+4. Recompile or wait for the automatic rescan.
 
----
+No toolbar arguments are used. The script is automatic.
 
-## Requirements
+## Recommended Custom Data
 
-- Space Engineers with the **SKO Nanobot Build and Repair System (Maintained)** mod
-- A Programmable Block on the same construct as the BaR welders
-- LCD panels renamed with the appropriate tags (see below)
+Custom Data is the cleanest setup because it keeps block names readable. Name tags still work as a fallback.
 
----
+### PB Custom Data
 
-## Installation
+Put this in the Programmable Block Custom Data only if you want to override defaults:
 
-1. Build a **Programmable Block** on your grid.
-2. Open it → **Edit** → paste the full contents of `RNB.cs`.
-3. Click **Check Code** — must show zero errors.
-4. Click **OK**.
+```ini
+[RNB]
+BootSeconds=6
+RescanSeconds=10
+AssemblerQueueSeconds=0.5
+AutoOfflineSeconds=600
+```
 
-The script starts immediately. The PB's own LCD and tagged RNB LCDs show a boot sequence, then switch to live pages. Check the PB detail panel for any warnings.
+| Setting | Default | Notes |
+|---|---:|---|
+| `BootSeconds` | `6` | Boot screen duration. Minimum `0.5`, maximum `60`. |
+| `RescanSeconds` | `10` | How often block roles/pages are rescanned. |
+| `AssemblerQueueSeconds` | `0.5` | How often missing parts are pushed to assemblers. |
+| `AutoOfflineSeconds` | `600` | Idle time before BaR welders are disabled. |
 
----
+### LCD Custom Data
 
-## Block Tags
+Put this in any LCD Custom Data:
 
-Rename blocks in-game — no config editing required. The script rescans every **30 seconds** automatically. Send `reinit` for immediate effect.
+```ini
+[RNB]
+Page=Missing
+```
 
-### Non-LCD blocks
+Valid pages:
 
-| Tag | Block type | What it does |
+```text
+Status
+Missing
+Weld
+Grind
+Welders
+Assemblers
+Projectors
+```
+
+### Functional Block Custom Data
+
+Put this in assembler, welder, light, or projector Custom Data:
+
+```ini
+[RNB]
+Role=Assembler
+```
+
+Valid roles:
+
+```text
+Assembler
+BasicAssembler
+NanoBot
+Alert
+Projector
+```
+
+Examples:
+
+```ini
+[RNB]
+Role=BasicAssembler
+```
+
+```ini
+[RNB]
+Role=NanoBot
+```
+
+```ini
+[RNB]
+Role=Projector
+```
+
+## Name Tag Fallback
+
+If you prefer block-name tags, these still work.
+
+### Functional Blocks
+
+| Name tag | Block type | What it does |
 |---|---|---|
-| `[RNBAssembler]` | Advanced Assembler | Receives all missing components |
-| `[RNBBasicAssembler]` | Basic Assembler | Receives only basic-craftable components |
-| `[NanoBot]` | BaR welder | Preferred explicit BaR/Nanobot detection tag |
-| `[RNBAlert]` | Any light | Colour/blink reflects current state |
-| `[RNBProjector]` | Any Projector | Tracked on Projectors page |
+| `[RNBAssembler]` | Assembler | Advanced assembler pool. |
+| `[RNBBasicAssembler]` | Basic Assembler | Basic component pool. |
+| `[NanoBot]` | BaR welder | Explicit BaR/NanoBot selection. |
+| `[RNBAlert]` | Light | State colour and blink. |
+| `[RNBProjector]` | Projector | Projector progress tracking. |
 
-### LCD blocks
+### LCD Pages
 
-Each tag maps to one fixed page. No cycling.
-
-| Tag | Page |
+| Name tag | Page |
 |---|---|
 | `[RNBStatus]` | System overview |
-| `[RNBMissing]` | Missing components list |
-| `[RNBWeld]` | Weld queue + progress bar |
-| `[RNBGrind]` | Grind queue list |
-| `[RNBWelders]` | Per-welder status detail |
-| `[RNBAssemblers]` | Per-assembler status detail |
-| `[RNBProjectors]` | Projector build progress |
+| `[RNBMissing]` | Missing components |
+| `[RNBWeld]` | Weld queue |
+| `[RNBGrind]` | Grind queue |
+| `[RNBWelders]` | Welder details |
+| `[RNBAssemblers]` | Assembler details |
+| `[RNBProjectors]` | Projector progress |
 
-Multiple LCDs can share the same tag — they all show the same page. The PB's own LCD is handled automatically with no tag required.
+## Page Reference
 
-### Example block names
+| Page | Shows |
+|---|---|
+| `Status` | Welders, assemblers, current work, queue counts, missing count, projectors. |
+| `Missing` | Missing component types and amounts. |
+| `Weld` | Weld queue and latched progress bar. |
+| `Grind` | Grind queue. |
+| `Welders` | Per-welder state, mode, reason, and target status. |
+| `Assemblers` | Per-assembler mode, enabled state, output count, repeat, and coop. |
+| `Projectors` | Per-projector build progress and remaining blocks. |
 
-```
-Status Screen [RNBStatus]
-Missing Parts [RNBMissing]
-Weld Queue [RNBWeld]
-Grind Queue [RNBGrind]
-Welder Panel [RNBWelders]
-Assembler Panel [RNBAssemblers]
-Build Progress [RNBProjectors]
-Main Assembler [RNBAssembler]
-Basic Assembler 1 [RNBBasicAssembler]
-Build Repair Unit [NanoBot]
-Alert Light [RNBAlert]
-Ship Blueprint [RNBProjector]
-```
+## Display Style
 
----
-
-## Pages
-
-### Status `[RNBStatus]`
-Full system overview — welder count, assembler count, current weld/grind target, all queue counts, missing type count, projector count.
-
-### Missing `[RNBMissing]`
-Two-column list of every component BaR cannot source with the required quantity. Red-coded. Shows "All components available" in green when clear.
-
-### Weld Queue `[RNBWeld]`
-Progress bar (built / peak) + scrollable list of blocks waiting to be welded.
-
-### Grind Queue `[RNBGrind]`
-Scrollable list of blocks waiting to be ground.
-
-### Welders `[RNBWelders]`
-Per-welder rows:
-- Name — colour-coded by state (green=working, amber=standby, dim=off, red=damaged)
-- Status badge — WORKING / STANDBY / OFF / DAMAGED
-- Type — `BaR` (cyan) or `STD`, plus functional state
-- ON TARGET — shown when that Nanobot is actively welding or grinding
-- Mode/reason — WELDING, GRINDING, OFFLINE, READY, plus a short reason such as Waiting parts, Weld queue, Grind queue, No target
-
-### Assemblers `[RNBAssemblers]`
-Per-assembler rows (tagged assemblers only):
-- Name — colour-coded by state
-- Status — WORKING / STANDBY / OFF / DAMAGED
-- Mode — ASSEMBLY (white) or DISASSEMBLY (amber)
-- COOP badge if cooperative mode is on
-- Output inventory item count
-- REPEAT badge if repeat mode is on
-
-### Projectors `[RNBProjectors]`
-Per-projector rows (tagged projectors only):
-- Name + BUILDING / IDLE state
-- Progress bar filled as blocks are built
-- Block count (built / total) and percentage
-
----
+- PB surface 0 shows a centred boot screen first, then a compact live overview.
+- Tagged/configured LCDs show fixed pages with a dark navy panel, cyan frame, and monospace text.
+- The boot loading bar uses a separate centred bar with no internal divider line.
 
 ## Assembler Routing
 
-The script automatically routes missing components to the correct assembler type:
+Basic assemblers receive only vanilla basic components:
 
-**Basic assemblers** (`[RNBBasicAssembler]`) receive:
-SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube, Motor, Display, BulletproofGlass, Girder
+```text
+SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube,
+Motor, Display, BulletproofGlass, Girder
+```
 
-**Advanced assemblers** (`[RNBAssembler]`) receive everything else — Computer, Superconductor, MetalGrid, Thrust components, etc.
+Advanced assemblers receive everything else.
 
-If a block is tagged `[RNBBasicAssembler]` that tag takes priority. Otherwise the script infers basic vs advanced from the block's definition subtype.
-
----
-
-## PB Boot Screen
-
-On every compile or reboot the PB's own LCD (surface 0) and tagged RNB LCDs show a short animated boot sequence — progress bar, animated dots, version info, and percent. After boot they switch to the live pages.
-
----
-
-## Alert Light States
-
-| State | Colour | Blink |
-|---|---|---|
-| Working | Green | Solid |
-| Idle | Dim blue | Solid |
-| Missing components | Red | Fast (1.5 s) |
-| Offline | Amber | Slow (3 s) |
-
----
+If a block is marked `BasicAssembler`, that wins. Otherwise RNB can infer basic vs advanced from the assembler subtype.
 
 ## Auto-Offline
 
-Idle time is seconds since the last tick where any weld, grind, collect target, or tagged projector with remaining blocks existed.
-
-- Default: **10 minutes** — edit `IDLE_TIMEOUT_SECONDS` at the top of the script.
-- On timeout: all BaR welders disabled, state → OFFLINE.
-- Send `online` arg to re-enable and reset the clock.
-- Send `offline` arg to force immediate shutdown.
-- A forced offline is only cleared by `online`.
-- If BaR welders are manually re-enabled after an idle timeout, RNB clears non-forced OFFLINE automatically.
-
----
-
-## Auto-Produce Mode Fix
-
-When `AUTO_PRODUCE_FIX_MODE = true` (default), any tagged assembler in Disassembly mode is switched to Assembly mode automatically before components are queued. Logged to PB detail panel:
-
-```
-Auto-mode: 'Basic Assembler 1' → Assembly
-```
-
----
-
-## Toolbar Arguments
-
-| Argument | Effect |
-|---|---|
-| `online` | Re-enables welders, clears forced-offline, resets idle clock |
-| `offline` | Immediately disables welders, sets forced-offline |
-| `info-only` | Skips assembler queuing this cycle only |
-| `reinit` | Forces an immediate block/tag rescan |
-
----
-
-## Script Constants
-
-| Constant | Default | Description |
-|---|---|---|
-| `IDLE_TIMEOUT_SECONDS` | `600.0` | Seconds of zero activity before auto-offline |
-| `AUTO_PRODUCE_FIX_MODE` | `true` | Auto-switch assemblers from Disassembly → Assembly |
-| `REINIT_INTERVAL` | `10.0` | Seconds between block tag rescans |
-| `ASSEMBLER_QUEUE_INTERVAL` | `0.5` | Seconds between assembler queue checks |
-| `BOOT_DURATION` | `1.0` | Seconds the boot animation plays |
-
----
+RNB disables BaR welders after `AutoOfflineSeconds` with no weld, grind, collect, or active projector work. If you manually re-enable a welder later, RNB clears the offline state automatically.
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
+| Symptom | Check |
 |---|---|
-| No BaR welders found | BaR mod not installed, wrong version, or no welders on this construct |
-| No assemblers registered | No assembler has an RNB tag |
-| LCD black / no content | Recompile the PB to re-run surface setup |
-| Welders disabled | Idle timeout fired — send `online` |
-| OFFLINE won't clear | Forced via `offline` arg — send `online` |
-| Projector shows IDLE | No blueprint loaded or blueprint already complete |
-| Basic assembler not producing | Component may require an advanced assembler — check `[RNBMissing]` LCD |
-| Wrong page on LCD | Tags are case-sensitive — check exact spelling |
-
-**Debug:** Open the PB terminal detail panel — shows init counts, auto-mode switches, queue failures, reinit, and online/offline transitions.
-
----
+| No BaR welders found | BaR mod installed, maintained SKO fork, same construct, or `Role=NanoBot`. |
+| LCD black | Recompile PB, or confirm LCD Custom Data has `[RNB]` and valid `Page=`. |
+| Wrong LCD page | Custom Data `Page=` overrides name tags. Check spelling. |
+| No assembler queue | Add `Role=Assembler` or `Role=BasicAssembler`, and confirm assembler is functional. |
+| Projector idle | Blueprint complete or no blueprint loaded. |
+| Welders disabled | Auto-offline fired; manually re-enable a BaR welder or raise `AutoOfflineSeconds`. |
 
 ## Compatibility Notes
 
-- SKO maintained fork only — requires `BuildAndRepair.MissingComponents`, `BuildAndRepair.PossibleTargets`, `BuildAndRepair.ProductionBlock.EnsureQueued`.
-- `IMyProjector.BuildProgress` and `IMyProjector.IsProjecting` are not in the SE scripting whitelist — not used. Progress derived from `TotalBlocks` / `RemainingBlocks`.
-- `MyResourceDistributorComponent` (power draw) is not in the whitelist — power figures are not shown.
-- No `static` fields — safe for SE's memory sandbox.
+- Requires SKO maintained BaR properties such as `BuildAndRepair.MissingComponents`, `BuildAndRepair.PossibleTargets`, and `BuildAndRepair.ProductionBlock.EnsureQueued`.
+- Uses only Space Engineers programmable block safe APIs.
+- No pasted RNB image/logo Custom Data is supported; the logo is drawn natively as text for reliability.
