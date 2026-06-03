@@ -224,6 +224,11 @@ private void HandleArgument(string arg)
 private void SetDockPoint(ref DockPoint point, string label)
 {
     RefreshBlocks();
+    if (_aiBasic == null)
+    {
+        SetError("AI Basic block '" + _aiBasicName + "' not found");
+        return;
+    }
     if (_connector == null)
     {
         SetError("Connector '" + _connectorName + "' not found");
