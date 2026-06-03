@@ -64,6 +64,8 @@ safety_factor    = 1.2
 | `rc_name` | `Drone RC` | Name of the Remote Control block |
 | `connector_name` | `Connector Front` | Name of the docking connector |
 | `lcd_name` | `Drone LCD` | Name of the LCD panel |
+| `cockpit_name` | _(empty)_ | Name of the cockpit to use for display — leave empty to use the first one found |
+| `cockpit_screen` | `0` | Screen index on the cockpit (0 = first screen) |
 | `cargo_threshold` | `90` | Depart pickup when cargo is at this % of max safe lift capacity |
 | `empty_threshold` | `5` | Depart dropoff when cargo volume drops below this % |
 | `cruise_altitude` | `200` | Meters above saved location to cruise at |
@@ -71,6 +73,10 @@ safety_factor    = 1.2
 | `min_battery` | `20` | Do not depart if battery below this % |
 | `safety_factor` | `1.2` | Thrust headroom multiplier — 1.2 means only use 83% of max lift capacity |
 | `resume_battery` | `80` | Battery % required to resume after a low-battery emergency return |
+| `cruise_speed` | `15` | Speed in m/s during climbing and long-distance flying legs |
+| `approach_speed` | `5` | Speed in m/s during departure backup and descent to approach waypoint |
+| `docking_speed` | `2` | Speed in m/s during final connector approach — keep this low |
+| `braking_distance` | `100` | Meters over which the drone must decelerate from cruise to approach speed — used by CALIBRATE to compute max safe cruise speed |
 
 ---
 
@@ -103,7 +109,7 @@ Open the Programmable Block, paste the script, click **Check Code**, then **OK**
 
 ### Step 5 — Calibrate
 
-1. Land the drone on flat ground (or at the pickup location)
+1. Stay docked at the pickup or dropoff connector
 2. Make sure all thrusters are functional and the RC block is active
 3. Run argument: `CALIBRATE`
 4. LCD and K menu show the result:
@@ -117,7 +123,13 @@ Base    : 12400 kg
 Max load: 9700 kg
 Safety  : 1.2x
 Gravity : 9.81 m/s²
+
+H.thrust: 80.4 kN
+Brake a : 3.7 m/s²
+Max spd : 28 m/s  (set)
 ```
+
+`cruise_speed` in Custom Data is automatically updated to the calculated safe maximum after each calibration. Increase `braking_distance` for a more conservative (slower) result.
 
 Calibration only needs to be repeated if thrusters are added, removed, or replaced. Re-run `CALIBRATE` after any such change.
 
@@ -138,7 +150,36 @@ Calibration only needs to be repeated if thrusters are added, removed, or replac
 | `CALIBRATE` | Measure thrust, gravity, and base mass to calculate max safe cargo load |
 | `START` | Begin autonomous cargo cycle (requires both locations set and calibration done) |
 | `STOP` | Stop immediately — disables autopilot and returns to IDLE |
+| `TEST` | Toggle test mode — skips cargo fill and empty wait, drone cycles immediately |
+| `TRIP_OUT` | Single trip from pickup to dropoff, then stop (test mode only) |
+| `TRIP_BACK` | Single trip from dropoff to pickup, then stop (test mode only) |
+| `RESET` | Clear all setup data (pickup, dropoff, calibration) and return to wizard |
 | `STATUS` | Force a display refresh |
+
+---
+
+## Test Mode
+
+Test mode allows you to verify the full flight cycle without waiting for cargo to load or unload.
+
+Enable it by running the `TEST` argument. The state line on the LCD will show `[TEST]` as a reminder. Run `TEST` again to disable.
+
+### Single trip commands
+
+| Command | Requires | Effect |
+|---|---|---|
+| `TRIP_OUT` | Test mode ON | One trip from pickup to dropoff, stop on arrival |
+| `TRIP_BACK` | Test mode ON | One trip from dropoff to pickup, stop on arrival |
+
+### Typical test workflow
+
+1. Run `TEST` to enable test mode
+2. Dock at pickup connector
+3. Run `TRIP_OUT` — drone departs immediately, flies to dropoff, docks, stops
+4. Run `TRIP_BACK` — drone departs dropoff, flies to pickup, docks, stops
+5. Run `TEST` again to disable test mode before starting normal operation
+
+Both trip commands run the same safety checks as `START` (battery, blocks, calibration). They will refuse to run if test mode is off.
 
 ---
 

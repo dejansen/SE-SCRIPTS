@@ -173,6 +173,17 @@ Both `Main(string argument, UpdateType updateSource)` and `Main(string argument)
 - Use Terminal Properties/Actions (`GetProperty`, `ApplyAction`) when a typed interface member exists
 - Assume a typed interface method works just because it compiles — some methods exist in the API but are unreliable or no-ops at runtime (see section 7)
 
+### C# version gotchas:
+- **Inline `out` variable declarations are C# 7 — not supported.** Declare variables before the call:
+  ```csharp
+  // WRONG (C# 7):
+  if (!TryGet(out string value)) { }
+
+  // CORRECT (C# 6):
+  string value;
+  if (!TryGet(out value)) { }
+  ```
+
 ### Notes on allocation:
 - Allocating new lists inside methods is common in real scripts and works fine
 - The official advice to reuse lists is a performance optimisation for hot paths, not a hard rule
