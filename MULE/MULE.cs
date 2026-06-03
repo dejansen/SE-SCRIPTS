@@ -20,6 +20,7 @@ private const float  DEFAULT_CRUISE_ALTITUDE  = 200f;
 private const float  DEFAULT_BACKUP_DISTANCE  = 15f;
 private const float  DEFAULT_MIN_BATTERY      = 20f;
 private const float  DEFAULT_SAFETY_FACTOR    = 1.2f;
+private const float  DEFAULT_RESUME_BATTERY   = 80f;
 
 // -------------------------------------------------------------------------
 // State machine
@@ -39,6 +40,8 @@ private enum DroneState
     FlyingToPickup,
     ApproachingPickup,
     DockingAtPickup,
+    EmergencyReturn,
+    WaitingForCharge,
     Error
 }
 
@@ -73,6 +76,7 @@ private float  _cruiseAltitude  = DEFAULT_CRUISE_ALTITUDE;
 private float  _backupDistance  = DEFAULT_BACKUP_DISTANCE;
 private float  _minBattery      = DEFAULT_MIN_BATTERY;
 private float  _safetyFactor   = DEFAULT_SAFETY_FACTOR;
+private float  _resumeBattery  = DEFAULT_RESUME_BATTERY;
 
 // block references
 private IMyRemoteControl              _rc;
@@ -93,6 +97,9 @@ private double _runStartTime   = 0;
 private float _maxCargoKg   = 0f;
 private float _baseMassKg   = 0f;
 private float _thrustKN     = 0f;
+
+// emergency return sub-phase: 0=climb, 1=fly to dropoff, 2=approach, 3=dock
+private int _emergencyPhase = 0;
 
 // -------------------------------------------------------------------------
 // Constructor
@@ -229,6 +236,12 @@ private void StartDrone()
         SetError("Run CALIBRATE before starting");
         return;
     }
+    float bat = GetBatteryPercent();
+    if (bat < _minBattery)
+    {
+        SetError("Battery " + bat.ToString("F0") + "% (min " + _minBattery.ToString("F0") + "%)");
+        return;
+    }
     if (!SafeToFly(out string reason))
     {
         SetError("Cannot start: " + reason);
@@ -262,27 +275,46 @@ private void StopDrone()
 // -------------------------------------------------------------------------
 private void RunStateMachine()
 {
+    // Mid-flight low battery check — triggers emergency return to dropoff
+    bool isDocked = _connector != null && _connector.Status == MyShipConnectorStatus.Connected;
+    if (!isDocked
+        && _state != DroneState.EmergencyReturn
+        && _state != DroneState.WaitingForCharge
+        && _state != DroneState.Error
+        && GetBatteryPercent() < _minBattery)
+    {
+        _emergencyPhase = 0;
+        _state = DroneState.EmergencyReturn;
+        if (_antenna != null) _antenna.HudText = "MULE | LOW BATTERY — RETURNING TO DROPOFF";
+    }
+
     switch (_state)
     {
-        case DroneState.Loading:           StateLoading();           break;
-        case DroneState.DepartingPickup:   StateDeparting(true);     break;
-        case DroneState.ClimbingFromPickup:StateClimbing(true);      break;
-        case DroneState.FlyingToDropoff:   StateFlyingTo(false);     break;
-        case DroneState.ApproachingDropoff:StateApproaching(false);  break;
-        case DroneState.DockingAtDropoff:  StateDocking(false);      break;
-        case DroneState.Unloading:         StateUnloading();         break;
-        case DroneState.DepartingDropoff:  StateDeparting(false);    break;
-        case DroneState.ClimbingFromDropoff:StateClimbing(false);    break;
-        case DroneState.FlyingToPickup:    StateFlyingTo(true);      break;
-        case DroneState.ApproachingPickup: StateApproaching(true);   break;
-        case DroneState.DockingAtPickup:   StateDocking(true);       break;
-        case DroneState.Error:             break;
-        default:                           break;
+        case DroneState.Loading:            StateLoading();           break;
+        case DroneState.DepartingPickup:    StateDeparting(true);     break;
+        case DroneState.ClimbingFromPickup: StateClimbing(true);      break;
+        case DroneState.FlyingToDropoff:    StateFlyingTo(false);     break;
+        case DroneState.ApproachingDropoff: StateApproaching(false);  break;
+        case DroneState.DockingAtDropoff:   StateDocking(false);      break;
+        case DroneState.Unloading:          StateUnloading();         break;
+        case DroneState.DepartingDropoff:   StateDeparting(false);    break;
+        case DroneState.ClimbingFromDropoff:StateClimbing(false);     break;
+        case DroneState.FlyingToPickup:     StateFlyingTo(true);      break;
+        case DroneState.ApproachingPickup:  StateApproaching(true);   break;
+        case DroneState.DockingAtPickup:    StateDocking(true);       break;
+        case DroneState.EmergencyReturn:    StateEmergencyReturn();   break;
+        case DroneState.WaitingForCharge:   StateWaitingForCharge();  break;
+        case DroneState.Error:              break;
+        default:                            break;
     }
 }
 
 private void StateLoading()
 {
+    // Battery hold — stay docked and wait, do not error
+    if (GetBatteryPercent() < _resumeBattery)
+        return;
+
     if (!SafeToFly(out string reason))
     {
         SetError("Hold: " + reason);
@@ -365,6 +397,52 @@ private void StateUnloading()
     }
 }
 
+private void StateEmergencyReturn()
+{
+    switch (_emergencyPhase)
+    {
+        case 0: // climb above current position before heading to dropoff
+        {
+            var pos      = Me.GetPosition();
+            var safeAlt  = Math.Max(pos.Y, _dropoff.ClimbPos.Y) + 50.0;
+            var climbPos = new Vector3D(pos.X, safeAlt, pos.Z);
+            FlyTo(climbPos, 10f);
+            if (HasArrived(climbPos, 15f)) _emergencyPhase = 1;
+            break;
+        }
+        case 1: // fly to dropoff cruise altitude
+            FlyTo(_dropoff.ClimbPos, 15f);
+            if (HasArrived(_dropoff.ClimbPos, 15f)) _emergencyPhase = 2;
+            break;
+        case 2: // descend to approach waypoint
+            FlyTo(_dropoff.ApproachPos, 5f);
+            if (HasArrived(_dropoff.ApproachPos, 3f)) _emergencyPhase = 3;
+            break;
+        case 3: // inch forward and connect
+            FlyTo(_dropoff.ConnectorPos, 2f);
+            if (_connector != null) _connector.Connect();
+            if (_connector != null && _connector.Status == MyShipConnectorStatus.Connected)
+            {
+                if (_rc != null) _rc.SetAutoPilotEnabled(false);
+                _emergencyPhase = 0;
+                _state = DroneState.WaitingForCharge;
+                Runtime.UpdateFrequency = UpdateFrequency.Update100;
+            }
+            break;
+    }
+}
+
+private void StateWaitingForCharge()
+{
+    if (GetBatteryPercent() >= _resumeBattery)
+    {
+        Runtime.UpdateFrequency = UpdateFrequency.Update10;
+        // Cargo may have been unloaded by the station sorter while waiting — resume from dropoff
+        Disconnect();
+        _state = DroneState.DepartingDropoff;
+    }
+}
+
 // -------------------------------------------------------------------------
 // Flight helpers
 // -------------------------------------------------------------------------
@@ -394,12 +472,6 @@ private void Disconnect()
 // -------------------------------------------------------------------------
 private bool SafeToFly(out string reason)
 {
-    float bat = GetBatteryPercent();
-    if (bat < _minBattery)
-    {
-        reason = "Battery " + bat.ToString("F0") + "% (min " + _minBattery.ToString("F0") + "%)";
-        return false;
-    }
     if (_rc == null || !_rc.IsFunctional)
     {
         reason = "RC block missing or damaged";
@@ -596,6 +668,8 @@ private string StateLabel()
         case DroneState.FlyingToPickup:     return "FLYING TO PICKUP";
         case DroneState.ApproachingPickup:  return "APPROACHING PICKUP";
         case DroneState.DockingAtPickup:    return "DOCKING AT PICKUP";
+        case DroneState.EmergencyReturn:    return "LOW BATTERY — RETURNING";
+        case DroneState.WaitingForCharge:   return "WAITING FOR CHARGE";
         case DroneState.Error:              return "ERROR";
         default:                            return "UNKNOWN";
     }
@@ -680,6 +754,7 @@ private void ParseCustomData()
     _backupDistance  = (float)ini.Get("drone", "backup_distance").ToDouble(DEFAULT_BACKUP_DISTANCE);
     _minBattery      = (float)ini.Get("drone", "min_battery").ToDouble(DEFAULT_MIN_BATTERY);
     _safetyFactor    = (float)ini.Get("drone", "safety_factor").ToDouble(DEFAULT_SAFETY_FACTOR);
+    _resumeBattery   = (float)ini.Get("drone", "resume_battery").ToDouble(DEFAULT_RESUME_BATTERY);
 }
 
 private void EnsureCustomDataDefaults()
@@ -698,6 +773,7 @@ private void EnsureCustomDataDefaults()
         ini.Set("drone", "backup_distance",  DEFAULT_BACKUP_DISTANCE);
         ini.Set("drone", "min_battery",      DEFAULT_MIN_BATTERY);
         ini.Set("drone", "safety_factor",    DEFAULT_SAFETY_FACTOR);
+        ini.Set("drone", "resume_battery",   DEFAULT_RESUME_BATTERY);
         Me.CustomData = ini.ToString();
     }
 }

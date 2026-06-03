@@ -70,6 +70,7 @@ safety_factor    = 1.2
 | `backup_distance` | `15` | Meters to reverse before climbing |
 | `min_battery` | `20` | Do not depart if battery below this % |
 | `safety_factor` | `1.2` | Thrust headroom multiplier — 1.2 means only use 83% of max lift capacity |
+| `resume_battery` | `80` | Battery % required to resume after a low-battery emergency return |
 
 ---
 
@@ -200,11 +201,13 @@ DOCKING AT PICKUP   ← moving to connector, attempting connect
 
 MULE will not depart (stops and sets ERROR) if:
 
-- Battery below `min_battery` %
+- Battery below `min_battery` % at the time `START` is run
 - Remote Control block is missing or damaged
 - Connector is missing or damaged
 - Pickup or dropoff location not configured
 - `CALIBRATE` has not been run
+
+**Low battery mid-flight:** if battery drops below `min_battery` while airborne, MULE does not stop — it aborts the current leg and returns to the dropoff location to dock and wait for charge. Once battery reaches `resume_battery` % the cycle resumes automatically. While docked at pickup waiting to load, MULE will also not depart until battery reaches `resume_battery` %.
 
 ---
 
