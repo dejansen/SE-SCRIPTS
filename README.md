@@ -20,6 +20,9 @@ Saves all settings of a named lighting group and forces every light to solid red
 ### [HERMES](Hermes/Hermes.md)
 Intergrid messaging service for town buildings. Buildings broadcast alerts (low hydrogen, low power, etc.) over IGC when Event Controllers fire. A central control building receives all alerts and displays them on a timestamped LCD dispatch board. One script handles both sender and receiver roles via Custom Data. Includes preprogrammed shortcodes, antenna auto-management, optional delivery confirmation with retry queue, and a persistent message log.
 
+### [MULE](MULE/MULE.md)
+Autonomous planetary cargo drone. Runs round-trip cargo cycles between a pickup connector (e.g. a mobile ice mining rig) and a dropoff connector (e.g. a processing station). One-time setup via arguments: set pickup, set dropoff, calibrate thrust capacity, start. Cargo limit is calculated from actual upward thruster force and gravity rather than a fixed volume threshold. Persists state, locations, and calibration across recompiles and server restarts.
+
 ### R.O.S — Rev Operating System
 
 Base station management system driving three LCD panels simultaneously: dock connector status, a proximity/approach scanner with runway lights, and a live miner fleet tracker.

@@ -53,9 +53,12 @@ There is no way to run a single test from the command line. All testing is done 
 │   ├── ROS-MinerBroadcast.cs      # Miner companion: broadcasts telemetry over IGC
 │   ├── ROS-DockingMonitor.md
 │   └── ROS-MinerBroadcast.md
-└── Hermes/
-    ├── Hermes.cs                  # Intergrid messaging service: sender + receiver in one script
-    └── Hermes.md
+├── Hermes/
+│   ├── Hermes.cs                  # Intergrid messaging service: sender + receiver in one script
+│   └── Hermes.md
+└── MULE/
+    ├── MULE.cs                    # Autonomous planetary cargo drone: pickup → dropoff round-trip
+    └── MULE.md
 ```
 
 Each script gets:
