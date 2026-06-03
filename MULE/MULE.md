@@ -14,7 +14,7 @@ Cargo capacity is not measured by volume percentage but by the maximum mass the 
 - Thrust-based cargo limit: departs when cargo mass reaches a safe fraction of liftable capacity
 - Empty detection: departs dropoff when cargo drops below a configurable volume threshold (station sorter pulls the ice)
 - Battery safety hold: will not depart if battery is below minimum threshold
-- Damage detection: will not depart if RC block or connector is non-functional
+- Damage detection: will not depart if AI blocks or connector are non-functional
 - LCD and cockpit screen show contextual output: setup confirmation, calibration results, or live status
 - Antenna HUD text with current state — visible to players within broadcast range
 - All key parameters configurable in Custom Data
@@ -28,7 +28,8 @@ Cargo capacity is not measured by volume percentage but by the maximum mass the 
 | Block | Name in script | Notes |
 |---|---|---|
 | Programmable Block | — | holds this script |
-| Remote Control | `Drone RC` | used for autopilot navigation |
+| AI Basic | `Drone AI Basic` | task block providing waypoints for AI Flight |
+| AI Flight | `Drone AI Flight` | move block executing physics-based flight control |
 | Connector | `Connector Front` | front-facing docking connector |
 | Cargo Container(s) | any | all containers on construct are monitored |
 | Battery(s) | any | all batteries on construct are monitored |
@@ -38,7 +39,7 @@ Cargo capacity is not measured by volume percentage but by the maximum mass the 
 | Cockpit | any | optional — screen 0 shows status |
 | Antenna | any | optional — broadcasts state as HUD text |
 
-Block names for RC, connector, and LCD can be changed in Custom Data.
+Block names for AI Basic, AI Flight, connector, and LCD can be changed in Custom Data.
 
 ---
 
@@ -48,7 +49,8 @@ After first compile the PB auto-populates its Custom Data with defaults:
 
 ```
 [drone]
-rc_name          = Drone RC
+ai_basic_name    = Drone AI Basic
+ai_flight_name   = Drone AI Flight
 connector_name   = Connector Front
 lcd_name         = Drone LCD
 cargo_threshold  = 90
@@ -61,7 +63,8 @@ safety_factor    = 1.2
 
 | Key | Default | Description |
 |---|---|---|
-| `rc_name` | `Drone RC` | Name of the Remote Control block |
+| `ai_basic_name` | `Drone AI Basic` | Name of the AI Basic (Task) block |
+| `ai_flight_name` | `Drone AI Flight` | Name of the AI Flight (Move) block |
 | `connector_name` | `Connector Front` | Name of the docking connector |
 | `lcd_name` | `Drone LCD` | Name of the LCD panel |
 | `cockpit_name` | _(empty)_ | Name of the cockpit to use for display — leave empty to use the first one found |
@@ -84,7 +87,7 @@ safety_factor    = 1.2
 
 ### Step 1 — Build the drone
 
-Build the drone with all required blocks. Name the Remote Control block `Drone RC` and the front connector `Connector Front` (or use different names and update Custom Data).
+Build the drone with all required blocks. Name the AI Basic block `Drone AI Basic`, the AI Flight block `Drone AI Flight`, and the front connector `Connector Front` (or use different names and update Custom Data).
 
 ### Step 2 — Paste and compile the script
 
@@ -110,7 +113,7 @@ Open the Programmable Block, paste the script, click **Check Code**, then **OK**
 ### Step 5 — Calibrate
 
 1. Stay docked at the pickup or dropoff connector
-2. Make sure all thrusters are functional and the RC block is active
+2. Make sure all thrusters are functional and the AI blocks are active
 3. Run argument: `CALIBRATE`
 4. LCD and K menu show the result:
 
@@ -271,10 +274,11 @@ The new position is saved immediately and used on the next run. No restart neede
 | Symptom | Likely cause |
 |---|---|
 | `SET_PICKUP` / `SET_DROPOFF` does nothing | Connector not connected when argument was run |
+| `START` refused with "AI Basic/Flight block missing" | Block names in Custom Data don't match actual block names |
 | `START` refused with "Run CALIBRATE first" | `CALIBRATE` argument has not been run yet |
 | `CALIBRATE` fails: no gravity | Drone is in space or gravity is too weak — land on a planet first |
 | `CALIBRATE` fails: no upward thrust | Thrusters not functional, or none facing upward relative to gravity |
-| Drone does not depart | Battery below threshold, or block missing/damaged |
+| Drone does not depart | Battery below threshold, or AI blocks/connector missing/damaged |
 | Drone departs too light | Lower `cargo_threshold` or lower `safety_factor` slightly |
 | Drone struggles to climb | Raise `safety_factor` and re-run `CALIBRATE` to reduce max cargo load |
 | Drone overshoots connector | Increase `backup_distance`; approach waypoint lands too close |

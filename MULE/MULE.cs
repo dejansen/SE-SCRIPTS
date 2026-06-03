@@ -11,22 +11,24 @@
 // -------------------------------------------------------------------------
 // Config defaults (overridden by Custom Data)
 // -------------------------------------------------------------------------
-private const string DEFAULT_RC_NAME        = "Drone RC";
-private const string DEFAULT_CONNECTOR_NAME = "Connector Front";
+private const string DEFAULT_AI_BASIC_NAME   = "Drone AI Basic";
+private const string DEFAULT_AI_FLIGHT_NAME  = "Drone AI Flight";
+private const string DEFAULT_CONNECTOR_NAME  = "Connector Front";
 private const string DEFAULT_LCD_NAME        = "Drone LCD";
 private const string DEFAULT_COCKPIT_NAME    = "";
 private const int    DEFAULT_COCKPIT_SCREEN  = 0;
-private const float  DEFAULT_CARGO_THRESHOLD  = 90f;
-private const float  DEFAULT_EMPTY_THRESHOLD  = 5f;
-private const float  DEFAULT_CRUISE_ALTITUDE  = 200f;
-private const float  DEFAULT_BACKUP_DISTANCE  = 15f;
-private const float  DEFAULT_MIN_BATTERY      = 20f;
-private const float  DEFAULT_SAFETY_FACTOR    = 1.2f;
-private const float  DEFAULT_RESUME_BATTERY   = 80f;
-private const float  DEFAULT_CRUISE_SPEED     = 15f;
-private const float  DEFAULT_APPROACH_SPEED   = 5f;
-private const float  DEFAULT_DOCKING_SPEED    = 2f;
+private const float  DEFAULT_CARGO_THRESHOLD = 90f;
+private const float  DEFAULT_EMPTY_THRESHOLD = 5f;
+private const float  DEFAULT_CRUISE_ALTITUDE = 200f;
+private const float  DEFAULT_BACKUP_DISTANCE = 15f;
+private const float  DEFAULT_MIN_BATTERY     = 20f;
+private const float  DEFAULT_SAFETY_FACTOR   = 1.2f;
+private const float  DEFAULT_RESUME_BATTERY  = 80f;
+private const float  DEFAULT_CRUISE_SPEED    = 15f;
+private const float  DEFAULT_APPROACH_SPEED  = 5f;
+private const float  DEFAULT_DOCKING_SPEED   = 2f;
 private const float  DEFAULT_BRAKING_DISTANCE = 100f;
+private const float  ARRIVE_TOLERANCE        = 5f;
 
 // -------------------------------------------------------------------------
 // State machine
@@ -75,7 +77,8 @@ private int        _ticksSinceBlockRefresh = 0;
 private const int  BLOCK_REFRESH_INTERVAL  = 300;
 
 // config
-private string _rcName        = DEFAULT_RC_NAME;
+private string _aiBasicName   = DEFAULT_AI_BASIC_NAME;
+private string _aiFlightName  = DEFAULT_AI_FLIGHT_NAME;
 private string _connectorName = DEFAULT_CONNECTOR_NAME;
 private string _lcdName        = DEFAULT_LCD_NAME;
 private string _cockpitName   = DEFAULT_COCKPIT_NAME;
@@ -93,7 +96,8 @@ private float  _dockingSpeed    = DEFAULT_DOCKING_SPEED;
 private float  _brakingDistance = DEFAULT_BRAKING_DISTANCE;
 
 // block references
-private IMyRemoteControl              _rc;
+private IMyRemoteControl              _aiBasic;
+private IMyFunctionalBlock            _aiFlightBlock;
 private IMyShipConnector              _connector;
 private IMyTextPanel                  _lcd;
 private IMyRadioAntenna               _antenna;
@@ -110,10 +114,7 @@ private double _runStartTime   = 0;
 // emergency return sub-phase
 private int _emergencyPhase = 0;
 
-// autopilot state tracking — used to detect when RC finishes a waypoint
-private bool _autoPilotWasEnabled = false;
-
-// last waypoint sent to RC — prevents resetting autopilot every tick
+// last waypoint sent to AI Basic — prevents resetting autopilot every tick
 private Vector3D _lastWaypoint = Vector3D.Zero;
 private Base6Directions.Direction _lastDir = Base6Directions.Direction.Forward;
 
@@ -166,10 +167,7 @@ public void Main(string argument, UpdateType updateSource)
     }
 
     if (_running)
-    {
         RunStateMachine();
-        _autoPilotWasEnabled = _rc != null && _rc.IsAutoPilotEnabled;
-    }
 
     UpdateDisplays();
 }
@@ -237,18 +235,18 @@ private void SetDockPoint(ref DockPoint point, string label)
         return;
     }
 
-    var gravity  = _rc.GetNaturalGravity();
+    var gravity  = _aiBasic.GetNaturalGravity();
     var upDir    = gravity.Length() > 0.01
         ? Vector3D.Normalize(-gravity)
-        : (Vector3D)_rc.WorldMatrix.Up;
+        : (Vector3D)_aiBasic.WorldMatrix.Up;
 
-    // Save the RC block position as the docking target — the autopilot flies
-    // the RC block to the waypoint, not the connector, so this is what matters.
-    var rcPos    = _rc.GetPosition();
+    // Save the AI Basic block position as the docking target — the autopilot flies
+    // the AI Basic block to the waypoint, not the connector, so this is what matters.
+    var aiPos    = _aiBasic.GetPosition();
     var backward = -_connector.WorldMatrix.Forward;
 
-    point.ConnectorPos = rcPos;
-    point.ApproachPos  = rcPos + backward * _backupDistance;
+    point.ConnectorPos = aiPos;
+    point.ApproachPos  = aiPos + backward * _backupDistance;
     point.ClimbPos     = point.ApproachPos + upDir * _cruiseAltitude;
     point.IsSet = true;
 
@@ -256,9 +254,9 @@ private void SetDockPoint(ref DockPoint point, string label)
     sb.AppendLine("=== MULE SETUP ===");
     sb.AppendLine(label + " saved.");
     sb.AppendLine("");
-    sb.AppendLine("X : " + rcPos.X.ToString("F0"));
-    sb.AppendLine("Y : " + rcPos.Y.ToString("F0"));
-    sb.AppendLine("Z : " + rcPos.Z.ToString("F0"));
+    sb.AppendLine("X : " + aiPos.X.ToString("F0"));
+    sb.AppendLine("Y : " + aiPos.Y.ToString("F0"));
+    sb.AppendLine("Z : " + aiPos.Z.ToString("F0"));
     sb.AppendLine("");
     sb.AppendLine("Approach offset: " + _backupDistance.ToString("F0") + " m");
     sb.AppendLine("Cruise altitude: " + _cruiseAltitude.ToString("F0") + " m");
@@ -272,6 +270,7 @@ private void SetDockPoint(ref DockPoint point, string label)
 // -------------------------------------------------------------------------
 private void StartDrone()
 {
+    RefreshBlocks();
     if (!_pickup.IsSet || !_dropoff.IsSet)
     {
         SetError("Set pickup and dropoff before starting");
@@ -359,8 +358,7 @@ private void StopDrone()
 {
     _running = false;
     Runtime.UpdateFrequency = UpdateFrequency.None;
-    if (_rc != null)
-        StopAutopilot();
+    StopAutopilot();
     _state = DroneState.Idle;
     Echo("MULE stopped.");
 }
@@ -433,14 +431,14 @@ private void StateDeparting(bool fromPickup)
     // Depart with a diagonal path: back away AND climb together to avoid unsafe rotations.
     // Compute a departure point that's at the approach position but 50m higher.
     var approachBase = fromPickup ? _pickup.ApproachPos : _dropoff.ApproachPos;
-    var gravity  = _rc != null ? _rc.GetNaturalGravity() : Vector3D.Zero;
+    var gravity  = _aiBasic != null ? _aiBasic.GetNaturalGravity() : Vector3D.Zero;
     var upDir    = gravity.Length() > 0.01
         ? Vector3D.Normalize(-gravity)
-        : (Vector3D)_rc.WorldMatrix.Up;
+        : (Vector3D)_aiBasic.WorldMatrix.Up;
     var departureTarget = approachBase + upDir * 50.0;
 
     FlyTo(departureTarget, _approachSpeed);
-    if (AutopilotFinished())
+    if (HasArrived(departureTarget))
         _state = fromPickup ? DroneState.ClimbingFromPickup : DroneState.ClimbingFromDropoff;
 }
 
@@ -448,7 +446,7 @@ private void StateClimbing(bool fromPickup)
 {
     var target = fromPickup ? _pickup.ClimbPos : _dropoff.ClimbPos;
     FlyTo(target, _cruiseSpeed);
-    if (AutopilotFinished())
+    if (HasArrived(target))
         _state = fromPickup ? DroneState.FlyingToDropoff : DroneState.FlyingToPickup;
 }
 
@@ -456,7 +454,7 @@ private void StateFlyingTo(bool toPickup)
 {
     var target = toPickup ? _pickup.ClimbPos : _dropoff.ClimbPos;
     FlyTo(target, _cruiseSpeed);
-    if (AutopilotFinished())
+    if (HasArrived(target))
         _state = toPickup ? DroneState.ApproachingPickup : DroneState.ApproachingDropoff;
 }
 
@@ -464,7 +462,7 @@ private void StateApproaching(bool toPickup)
 {
     var target = toPickup ? _pickup.ApproachPos : _dropoff.ApproachPos;
     FlyTo(target, _approachSpeed);
-    if (AutopilotFinished())
+    if (HasArrived(target))
         _state = toPickup ? DroneState.DockingAtPickup : DroneState.DockingAtDropoff;
 }
 
@@ -505,22 +503,22 @@ private void StateEmergencyReturn()
     {
         case 0:
         {
-            var gravity  = _rc != null ? _rc.GetNaturalGravity() : Vector3D.Zero;
+            var gravity  = _aiBasic != null ? _aiBasic.GetNaturalGravity() : Vector3D.Zero;
             var upDir    = gravity.Length() > 0.01
                 ? Vector3D.Normalize(-gravity)
-                : (Vector3D)_rc.WorldMatrix.Up;
-            var safeClimb = _rc.GetPosition() + upDir * (_cruiseAltitude + 50.0);
+                : (Vector3D)_aiBasic.WorldMatrix.Up;
+            var safeClimb = _aiBasic.GetPosition() + upDir * (_cruiseAltitude + 50.0);
             FlyTo(safeClimb, _cruiseSpeed);
-            if (AutopilotFinished()) _emergencyPhase = 1;
+            if (HasArrived(safeClimb)) _emergencyPhase = 1;
             break;
         }
         case 1:
             FlyTo(_dropoff.ClimbPos, _cruiseSpeed);
-            if (AutopilotFinished()) _emergencyPhase = 2;
+            if (HasArrived(_dropoff.ClimbPos)) _emergencyPhase = 2;
             break;
         case 2:
             FlyTo(_dropoff.ApproachPos, _approachSpeed);
-            if (AutopilotFinished()) _emergencyPhase = 3;
+            if (HasArrived(_dropoff.ApproachPos)) _emergencyPhase = 3;
             break;
         case 3:
             FlyTo(_dropoff.ConnectorPos, _dockingSpeed);
@@ -550,43 +548,48 @@ private void StateWaitingForCharge()
 // Flight helpers
 // -------------------------------------------------------------------------
 
-// Sets a waypoint on the RC block only when the target or direction changes.
-// Using FlightMode.OneWay with a single waypoint per state is the reliable approach —
-// multi-waypoint OneWay mode has known bugs in SE where waypoints get skipped.
+// Sets a waypoint on the AI Basic block only when the target or direction changes.
+// Enables the AI Flight block for physics-based flight control.
 private void FlyTo(Vector3D target, float speed,
     Base6Directions.Direction dir = Base6Directions.Direction.Forward)
 {
-    if (_rc == null) return;
+    if (_aiBasic == null || _aiFlightBlock == null) return;
     if (Vector3D.DistanceSquared(target, _lastWaypoint) < 0.01 && dir == _lastDir)
         return;
     _lastWaypoint = target;
     _lastDir      = dir;
-    _rc.ClearWaypoints();
-    _rc.AddWaypoint(target, "WP");
-    _rc.SpeedLimit = speed;
-    _rc.FlightMode = FlightMode.OneWay;
-    _rc.Direction  = dir;
-    _rc.SetAutoPilotEnabled(true);
+
+    // Enable AI Flight block for physics-based control
+    _aiFlightBlock.Enabled = true;
+    var flightTerm = _aiFlightBlock as IMyTerminalBlock;
+    if (flightTerm != null)
+    {
+        flightTerm.SetValue<bool>("CollisionAvoidance", true);
+        flightTerm.SetValue<bool>("AlignToGravity", true);
+    }
+
+    // Feed waypoint to AI Basic block
+    _aiBasic.ClearWaypoints();
+    _aiBasic.AddWaypoint(target, "WP");
+    _aiBasic.SpeedLimit = speed;
+    _aiBasic.FlightMode = FlightMode.OneWay;
+    _aiBasic.Direction  = dir;
+    _aiBasic.SetAutoPilotEnabled(true);
 }
 
 private void StopAutopilot()
 {
-    _lastWaypoint        = Vector3D.Zero;
-    _autoPilotWasEnabled = false;
-    if (_rc != null)
-        _rc.SetAutoPilotEnabled(false);
+    _lastWaypoint = Vector3D.Zero;
+    if (_aiBasic != null)
+        _aiBasic.SetAutoPilotEnabled(false);
+    if (_aiFlightBlock != null)
+        _aiFlightBlock.Enabled = false;
 }
 
-// Returns true the tick after the RC autopilot finishes a waypoint on its own.
-private bool AutopilotFinished()
+private bool HasArrived(Vector3D target)
 {
-    return _autoPilotWasEnabled && _rc != null && !_rc.IsAutoPilotEnabled;
-}
-
-private bool HasArrived(Vector3D target, float tolerance)
-{
-    var pos = _rc != null ? _rc.GetPosition() : Me.GetPosition();
-    return Vector3D.Distance(pos, target) <= tolerance;
+    var pos = _aiBasic != null ? _aiBasic.GetPosition() : Me.GetPosition();
+    return Vector3D.Distance(pos, target) <= ARRIVE_TOLERANCE;
 }
 
 private void Disconnect()
@@ -600,9 +603,14 @@ private void Disconnect()
 // -------------------------------------------------------------------------
 private bool SafeToFly(out string reason)
 {
-    if (_rc == null || !_rc.IsFunctional)
+    if (_aiBasic == null || !_aiBasic.IsFunctional)
     {
-        reason = "RC block missing or damaged";
+        reason = "AI Basic block missing or damaged";
+        return false;
+    }
+    if (_aiFlightBlock == null || !_aiFlightBlock.IsFunctional)
+    {
+        reason = "AI Flight block missing or damaged";
         return false;
     }
     if (_connector == null || !_connector.IsFunctional)
@@ -637,8 +645,8 @@ private void GetCargoMassInfo(out float cargoKg, out float fillPct)
 {
     cargoKg = 0f;
     fillPct = 0f;
-    if (_rc == null) return;
-    var shipMass = _rc.CalculateShipMass();
+    if (_aiBasic == null) return;
+    var shipMass = _aiBasic.CalculateShipMass();
     cargoKg = (float)(shipMass.TotalMass - shipMass.BaseMass);
     if (_maxCargoKg > 0f)
         fillPct = cargoKg / _maxCargoKg * 100f;
@@ -650,13 +658,13 @@ private void Calibrate()
 {
     RefreshBlocks();
 
-    if (_rc == null)
+    if (_aiBasic == null)
     {
-        Echo("CALIBRATE failed: RC block '" + _rcName + "' not found");
+        Echo("CALIBRATE failed: AI Basic block '" + _aiBasicName + "' not found");
         return;
     }
 
-    var gravity = _rc.GetNaturalGravity();
+    var gravity = _aiBasic.GetNaturalGravity();
     double gravMag = gravity.Length();
     if (gravMag < 0.01)
     {
@@ -682,7 +690,7 @@ private void Calibrate()
         return;
     }
 
-    var shipMass     = _rc.CalculateShipMass();
+    var shipMass     = _aiBasic.CalculateShipMass();
     double maxTotal  = upwardThrust / (gravMag * _safetyFactor);
     double maxCargo  = maxTotal - shipMass.BaseMass;
 
@@ -958,9 +966,10 @@ private void SetError(string message)
 // -------------------------------------------------------------------------
 private void RefreshBlocks()
 {
-    _rc        = GridTerminalSystem.GetBlockWithName(_rcName)        as IMyRemoteControl;
-    _connector = GridTerminalSystem.GetBlockWithName(_connectorName) as IMyShipConnector;
-    _lcd       = GridTerminalSystem.GetBlockWithName(_lcdName)       as IMyTextPanel;
+    _aiBasic       = GridTerminalSystem.GetBlockWithName(_aiBasicName)   as IMyRemoteControl;
+    _aiFlightBlock = GridTerminalSystem.GetBlockWithName(_aiFlightName)  as IMyFunctionalBlock;
+    _connector     = GridTerminalSystem.GetBlockWithName(_connectorName) as IMyShipConnector;
+    _lcd           = GridTerminalSystem.GetBlockWithName(_lcdName)       as IMyTextPanel;
 
     _batteries.Clear();
     GridTerminalSystem.GetBlocksOfType(_batteries, b => b.IsSameConstructAs(Me));
@@ -996,7 +1005,8 @@ private void ParseCustomData()
     var ini = new MyIni();
     if (!ini.TryParse(Me.CustomData)) return;
 
-    _rcName          = ini.Get("drone", "rc_name").ToString(DEFAULT_RC_NAME);
+    _aiBasicName     = ini.Get("drone", "ai_basic_name").ToString(DEFAULT_AI_BASIC_NAME);
+    _aiFlightName    = ini.Get("drone", "ai_flight_name").ToString(DEFAULT_AI_FLIGHT_NAME);
     _connectorName   = ini.Get("drone", "connector_name").ToString(DEFAULT_CONNECTOR_NAME);
     _lcdName         = ini.Get("drone", "lcd_name").ToString(DEFAULT_LCD_NAME);
     _cockpitName     = ini.Get("drone", "cockpit_name").ToString(DEFAULT_COCKPIT_NAME);
@@ -1010,8 +1020,8 @@ private void ParseCustomData()
     _resumeBattery   = (float)ini.Get("drone", "resume_battery").ToDouble(DEFAULT_RESUME_BATTERY);
     _cruiseSpeed     = (float)ini.Get("drone", "cruise_speed").ToDouble(DEFAULT_CRUISE_SPEED);
     _approachSpeed   = (float)ini.Get("drone", "approach_speed").ToDouble(DEFAULT_APPROACH_SPEED);
-    _dockingSpeed     = (float)ini.Get("drone", "docking_speed").ToDouble(DEFAULT_DOCKING_SPEED);
-    _brakingDistance  = (float)ini.Get("drone", "braking_distance").ToDouble(DEFAULT_BRAKING_DISTANCE);
+    _dockingSpeed    = (float)ini.Get("drone", "docking_speed").ToDouble(DEFAULT_DOCKING_SPEED);
+    _brakingDistance = (float)ini.Get("drone", "braking_distance").ToDouble(DEFAULT_BRAKING_DISTANCE);
 }
 
 private void EnsureCustomDataDefaults()
@@ -1020,7 +1030,8 @@ private void EnsureCustomDataDefaults()
     ini.TryParse(Me.CustomData);
 
     bool changed = false;
-    changed |= SetDefault(ini, "drone", "rc_name",         DEFAULT_RC_NAME);
+    changed |= SetDefault(ini, "drone", "ai_basic_name",   DEFAULT_AI_BASIC_NAME);
+    changed |= SetDefault(ini, "drone", "ai_flight_name",  DEFAULT_AI_FLIGHT_NAME);
     changed |= SetDefault(ini, "drone", "connector_name",  DEFAULT_CONNECTOR_NAME);
     changed |= SetDefault(ini, "drone", "lcd_name",        DEFAULT_LCD_NAME);
     changed |= SetDefault(ini, "drone", "cockpit_name",    DEFAULT_COCKPIT_NAME);
@@ -1034,8 +1045,8 @@ private void EnsureCustomDataDefaults()
     changed |= SetDefault(ini, "drone", "resume_battery",  DEFAULT_RESUME_BATTERY.ToString());
     changed |= SetDefault(ini, "drone", "cruise_speed",    DEFAULT_CRUISE_SPEED.ToString());
     changed |= SetDefault(ini, "drone", "approach_speed",  DEFAULT_APPROACH_SPEED.ToString());
-    changed |= SetDefault(ini, "drone", "docking_speed",     DEFAULT_DOCKING_SPEED.ToString());
-    changed |= SetDefault(ini, "drone", "braking_distance",  DEFAULT_BRAKING_DISTANCE.ToString());
+    changed |= SetDefault(ini, "drone", "docking_speed",   DEFAULT_DOCKING_SPEED.ToString());
+    changed |= SetDefault(ini, "drone", "braking_distance", DEFAULT_BRAKING_DISTANCE.ToString());
 
     if (changed)
         Me.CustomData = ini.ToString();
