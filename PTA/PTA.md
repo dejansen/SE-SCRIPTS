@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant
+# PTA — Planetary Travel Assistant `v1.1`
 
 Autopilot assistant for planetary flight. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
@@ -166,6 +166,7 @@ target     = 1000  ; cruise altitude in metres above terrain
 correction = 0.005 ; thrust fraction added per metre of altitude error
 damping    = 0.01  ; thrust fraction subtracted per m/s of vertical speed
 threshold  = 5     ; altitude dead-band in metres — no PD correction below this
+max_speed  = 15    ; maximum vertical speed in m/s — hard cap on top of PD
 
 [display]
 cockpit_screen = 0 ; which cockpit screen index to write to (0-based)

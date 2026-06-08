@@ -27,11 +27,13 @@ private const float  DEFAULT_ALTITUDE_TARGET     = 1000f;
 private const float  DEFAULT_ALTITUDE_CORRECTION = 0.005f;
 private const float  DEFAULT_ALTITUDE_DAMPING    = 0.01f;
 private const float  DEFAULT_ALTITUDE_THRESHOLD  = 5f;
+private const float  DEFAULT_ALTITUDE_MAX_SPEED  = 15f;
 
 private const string DEFAULT_BRAKE_GROUP   = "";
 private const int    DEFAULT_COCKPIT_SCREEN = 0;
 
-private const int BOOT_TICKS = 12;
+private const int    BOOT_TICKS = 12;
+private const string VERSION   = "1.1";
 
 // -------------------------------------------------------------------------
 // Display colors  (same palette as AGM for consistency)
@@ -62,6 +64,7 @@ private float  _altitudeTarget     = DEFAULT_ALTITUDE_TARGET;
 private float  _altitudeCorrection = DEFAULT_ALTITUDE_CORRECTION;
 private float  _altitudeDamping    = DEFAULT_ALTITUDE_DAMPING;
 private float  _altitudeThreshold  = DEFAULT_ALTITUDE_THRESHOLD;
+private float  _altitudeMaxSpeed   = DEFAULT_ALTITUDE_MAX_SPEED;
 
 private string _brakeGroup    = DEFAULT_BRAKE_GROUP;
 private int    _cockpitScreen = DEFAULT_COCKPIT_SCREEN;
@@ -277,7 +280,26 @@ private void AltitudeTick()
     if (Math.Abs(altitudeError) >= _altitudeThreshold || Math.Abs(verticalSpeed) >= 1.0)
         pdCorrection = (float)(altitudeError * _altitudeCorrection - verticalSpeed * _altitudeDamping);
 
-    float thrustFraction = Math.Max(0f, Math.Min(1f, hoverFraction + pdCorrection));
+    // 0.001 keeps override active so dampeners cannot steal upward thrusters during descent.
+    // Setting 0f releases the override back to the game, which is the bug that causes
+    // slow/no descent and upward drift.
+    float thrustFraction = Math.Max(0.001f, Math.Min(1f, hoverFraction + pdCorrection));
+
+    // Speed limiter: applied after PD so it acts as a hard cap regardless of altitude error.
+    // Braking gain scales with excess speed relative to the configured limit.
+    if (verticalSpeed < -_altitudeMaxSpeed)
+    {
+        float excess = (float)(-verticalSpeed - _altitudeMaxSpeed);
+        float brake  = Math.Min(1f, hoverFraction + excess / _altitudeMaxSpeed);
+        if (brake > thrustFraction) thrustFraction = brake;
+    }
+    else if (verticalSpeed > _altitudeMaxSpeed)
+    {
+        float excess = (float)(verticalSpeed - _altitudeMaxSpeed);
+        float limit  = Math.Max(0.001f, hoverFraction - excess / _altitudeMaxSpeed);
+        if (limit < thrustFraction) thrustFraction = limit;
+    }
+
     foreach (var t in _upThrusters)
         t.ThrustOverridePercentage = thrustFraction;
 
@@ -388,7 +410,7 @@ private void DrawBoot(int phase)
             Txt(fr, "╔═╗ ╔╦╗ ╔═╗", cx, startY,        COL_ACCENT2, 0.72f, TextAlignment.CENTER);
             Txt(fr, "╠═╝  ║  ╠═╣",  cx, startY + 22f,  COL_ACCENT2, 0.72f, TextAlignment.CENTER);
             Txt(fr, "╩    ╩  ╩ ╩",  cx, startY + 44f,  COL_ACCENT2, 0.72f, TextAlignment.CENTER);
-            Txt(fr, "Planetary Travel Assistant", cx, startY + 68f, COL_DIM, 0.38f, TextAlignment.CENTER);
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION, cx, startY + 68f, COL_DIM, 0.38f, TextAlignment.CENTER);
 
             Fill(fr, new RectangleF(pan.X + 20f, startY + 84f, pan.Width - 40f, 1f), COL_ACCENT);
 
@@ -442,7 +464,7 @@ private void DrawOffline()
             Fill(fr, new RectangleF(pan.X + 10f, startY + 64f, pan.Width - 20f, 1f), COL_ACCENT);
 
             Txt(fr, "OFFLINE",                    cx, startY + 76f,  COL_BAD,  0.90f, TextAlignment.CENTER);
-            Txt(fr, "Planetary Travel Assistant", cx, startY + 110f, COL_DIM,  0.36f, TextAlignment.CENTER);
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION, cx, startY + 110f, COL_DIM,  0.36f, TextAlignment.CENTER);
         }
     }
 }
@@ -479,8 +501,13 @@ private void DrawStatus()
             if (pan.Width >= 350f)
                 Txt(fr, "Planetary Travel Assistant", pan.Right - 20f, pan.Y + 20f, COL_DIM, 0.34f, TextAlignment.RIGHT);
 
+            // Mode sub-header
+            string modeLabel = GetModeLabel();
+            if (modeLabel.Length > 0)
+                Txt(fr, modeLabel, pan.X + 20f, pan.Y + 42f, COL_WARN, 0.44f, TextAlignment.LEFT);
+
             // Divider
-            float dy = pan.Y + 52f;
+            float dy = pan.Y + 58f;
             Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
             dy += 14f;
 
@@ -507,10 +534,16 @@ private void DrawStatus()
                 _brakeThrusters.Count > 0 ? COL_OK : COL_DIM);
 
             // Footer
-            Txt(fr, "Planetary Travel Assistant",
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
                 cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
         }
     }
+}
+
+private string GetModeLabel()
+{
+    if (_brakeThrusters.Count > 0) return "CRUISE";
+    return "";
 }
 
 private Color HorizonColor()
@@ -549,6 +582,7 @@ private void ParseConfig()
     _altitudeCorrection = (float)ini.Get(SEC_ALTITUDE, "correction").ToDouble(DEFAULT_ALTITUDE_CORRECTION);
     _altitudeDamping    = (float)ini.Get(SEC_ALTITUDE, "damping").ToDouble(DEFAULT_ALTITUDE_DAMPING);
     _altitudeThreshold  = (float)ini.Get(SEC_ALTITUDE, "threshold").ToDouble(DEFAULT_ALTITUDE_THRESHOLD);
+    _altitudeMaxSpeed   = (float)ini.Get(SEC_ALTITUDE, "max_speed").ToDouble(DEFAULT_ALTITUDE_MAX_SPEED);
 
     _brakeGroup    = ini.Get(SEC_CRUISE,  "brake_group").ToString(DEFAULT_BRAKE_GROUP);
     _cockpitScreen = ini.Get(SEC_DISPLAY, "cockpit_screen").ToInt32(DEFAULT_COCKPIT_SCREEN);
@@ -564,6 +598,7 @@ private void WriteDefaultConfig()
     ini.Set(SEC_ALTITUDE, "correction",     DEFAULT_ALTITUDE_CORRECTION);
     ini.Set(SEC_ALTITUDE, "damping",        DEFAULT_ALTITUDE_DAMPING);
     ini.Set(SEC_ALTITUDE, "threshold",      DEFAULT_ALTITUDE_THRESHOLD);
+    ini.Set(SEC_ALTITUDE, "max_speed",      DEFAULT_ALTITUDE_MAX_SPEED);
     ini.Set(SEC_CRUISE,   "brake_group",    DEFAULT_BRAKE_GROUP);
     ini.Set(SEC_DISPLAY,  "cockpit_screen", DEFAULT_COCKPIT_SCREEN);
     Me.CustomData = ini.ToString();
@@ -682,9 +717,12 @@ private void FindUpThrusters(Vector3D gravity)
 
 private void ApplyUpdateFrequency()
 {
-    Runtime.UpdateFrequency = (_horizonActive || _altitudeActive)
-        ? UpdateFrequency.Update100
-        : UpdateFrequency.None;
+    if (_altitudeActive)
+        Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    else if (_horizonActive)
+        Runtime.UpdateFrequency = UpdateFrequency.Update100;
+    else
+        Runtime.UpdateFrequency = UpdateFrequency.None;
 }
 
 private void ReleaseGyros()
