@@ -1,6 +1,6 @@
-# PTA — Planetary Travel Assistant `v1.3`
+# PTA — Planetary Travel Assistant `v1.4`
 
-Autopilot assistant for planetary flight. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
+Autopilot assistant for planetary flight and orbit transitions. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
 ---
 
@@ -8,7 +8,9 @@ Autopilot assistant for planetary flight. Features can be enabled independently 
 
 - **Horizon stabilizer** — uses gyro override to keep the ship level with the planetary horizon. Corrects pitch and roll; releases gyros when already aligned so manual control is unaffected.
 - **Cruise altitude** — uses upward thruster override to hold a fixed altitude above the terrain surface. Adapts automatically to mountains and valleys. When descending at speed, pitches the nose down for a natural glide rather than firing down thrusters; falls back to thrust-based descent at low speed.
-- **Cruise mode** — convenience command that disables brake thrusters (so the ship coasts freely) and enables both horizon and altitude hold in one press.
+- **Cruise mode** — convenience command that disables brake thrusters (so the ship coasts freely) and enables horizon and altitude hold in one press. Works in space too — in zero gravity only the brake thrusters are toggled.
+- **Ascend mode** — full-thrust climb to orbit using configured hydrogen thruster groups. Keeps ship level during climb; auto-completes when gravity drops near zero.
+- **Descend mode** — gravity-powered descent from orbit or high altitude. Disables up thrusters so the ship falls freely; keeps ship level via horizon hold. Auto-completes at 3000 m.
 - **Display** — animated boot screen on startup, live status panel with colour-coded state, shown on any tagged LCD or cockpit screen.
 
 ---
@@ -24,12 +26,13 @@ Run this once after loading into a save, or after making changes to Custom Data.
 
 ### `PTA_OFF`
 Master off switch. Immediately:
-- Disables horizon stabilizer and releases all gyro overrides
-- Disables altitude hold and releases all thruster overrides
+- Disables all active features and releases gyro overrides
+- Releases all thruster overrides
 - Re-enables any brake thrusters that were disabled by `CRUISE_ON`
+- Re-enables any thrusters that were disabled by `ASCEND_ON`
 - Stops the update loop
 
-Use this to regain full manual control at any time. Safe to press at any speed or altitude.
+Safe to press at any speed or altitude.
 
 ---
 
@@ -43,7 +46,7 @@ Reads current config from Custom Data on activation.
 ---
 
 ### `HORIZON_OFF`
-Disables the horizon stabilizer. Releases all gyro overrides immediately. The ship returns to normal physics and manual control.
+Disables the horizon stabilizer. Releases all gyro overrides immediately.
 
 ---
 
@@ -57,7 +60,7 @@ Reads current config from Custom Data on activation.
 ---
 
 ### `ALTITUDE_OFF`
-Disables altitude hold. Releases all upward thruster overrides. The ship returns to normal dampener or manual thruster control.
+Disables altitude hold. Releases all upward thruster overrides.
 
 ---
 
@@ -74,34 +77,80 @@ Requires the ship to be near a planet with a detectable surface.
 One-press cruise mode. Does the following in order:
 1. Reads config from Custom Data
 2. Scans the grid for blocks
-3. Identifies and **disables** brake thrusters (the ones pointing forward that slow the ship down)
-4. Enables horizon stabilizer
-5. Enables altitude hold
+3. Identifies and **disables** brake thrusters
+4. In planetary gravity: enables horizon stabilizer and altitude hold
+5. In space (zero gravity): only disables brakes — no horizon or altitude needed
 
-With brakes off, the ship coasts at whatever speed it was going. Use your forward thrusters to set speed, then let PTA keep you level and at altitude.
+With brakes off, the ship coasts at whatever speed it was going. Use your forward thrusters to set speed.
 
 ---
 
 ### `CRUISE_OFF`
-Exits cruise mode. Does the following:
-1. Disables horizon stabilizer
-2. Disables altitude hold
-3. Releases all gyro and thruster overrides
-4. Re-enables all brake thrusters
+Exits cruise mode:
+1. Disables horizon stabilizer and altitude hold
+2. Releases all gyro and thruster overrides
+3. Re-enables all brake thrusters
 
-Returns full manual control. The ship will start decelerating again via dampeners once brakes are restored.
+---
+
+### `ASCEND_ON`
+Activates ascent to orbit. Requires `up_group` and `down_group` to be set in Custom Data, hydrogen thrusters, and non-empty hydrogen tanks.
+
+On activation:
+- Turns off stockpile mode on all hydrogen tanks
+- Disables down-facing thrusters (so the ship can actually climb)
+- Sets up thrusters to full override
+- Enables horizon stabilizer to keep ship level during climb
+- Throttles back to coast at 95 m/s to avoid overheating
+
+Auto-completes when gravity drops below 0.04 m/s² (edge of atmosphere). Re-enables all thruster groups and releases control.
+
+---
+
+### `ASCEND_OFF`
+Manually ends ascent mode early. Re-enables all thruster groups and releases gyro control.
+
+---
+
+### `DESCEND_ON`
+Activates gravity-powered descent. Only works in planetary gravity.
+
+On activation:
+- Sets up thrusters (from `up_group`) to near-zero override so dampeners cannot counteract the fall
+- Disables altitude hold if it was running
+- Enables horizon stabilizer to keep ship level during descent
+
+Auto-completes at 3000 m altitude. At that point the up thrusters are released and horizon is turned off — ready for manual landing approach.
+
+Requires `up_group` to be set in Custom Data.
+
+---
+
+### `DESCEND_OFF`
+Manually ends descent mode early. Releases up thruster overrides and gyro control.
 
 ---
 
 ## Typical Workflow
 
+### Planetary cruise
 1. Press `PTA_ON` — system scans the grid and shows boot screen
 2. Fly to the altitude you want to cruise at
 3. Press `SET_ALTITUDE` — locks current height as target
 4. Accelerate to cruise speed
 5. Press `CRUISE_ON` — brakes off, horizon + altitude hold active
-6. The ship coasts and stays level; use forward thrusters to adjust speed
-7. Press `CRUISE_OFF` or `PTA_OFF` to regain full control
+6. Press `CRUISE_OFF` or `PTA_OFF` to regain full control
+
+### Ascent to orbit
+1. Press `PTA_ON`
+2. Make sure hydrogen tanks are full and `up_group` / `down_group` are set
+3. Point ship upward or let horizon handle it
+4. Press `ASCEND_ON` — climbs to orbit automatically
+
+### Descent from orbit
+1. Make sure `up_group` is set in Custom Data
+2. Press `DESCEND_ON` — ship falls freely under gravity, stays level
+3. At 3000 m descent auto-stops — take manual control for landing
 
 ---
 
@@ -119,10 +168,10 @@ Returns full manual control. The ship will start decelerating again via dampener
 | 3 | `CRUISE_ON` | Cruise On |
 | 4 | `CRUISE_OFF` | Cruise Off |
 | 5 | `SET_ALTITUDE` | Set Alt |
-| 6 | `HORIZON_ON` | Horizon On |
-| 7 | `HORIZON_OFF` | Horizon Off |
-| 8 | `ALTITUDE_ON` | Alt Hold On |
-| 9 | `ALTITUDE_OFF` | Alt Hold Off |
+| 6 | `ASCEND_ON` | Ascend On |
+| 7 | `ASCEND_OFF` | Ascend Off |
+| 8 | `DESCEND_ON` | Descend On |
+| 9 | `DESCEND_OFF` | Descend Off |
 
 ### Display setup
 
@@ -147,36 +196,44 @@ The panel border changes colour to indicate system state.
 | Bright cyan | Features active, all stable |
 | Amber | One or more features actively correcting |
 
+ASCEND and DESCEND modes have their own dedicated status screens showing altitude, gravity, and speed.
+
 ---
 
 ## Custom Data Reference
 
 ```
 [cruise]
-brake_group =      ; name of a block group containing your brake thrusters
-                   ; leave empty to auto-detect by thruster orientation
+brake_group =        ; name of a block group containing your brake thrusters
+                     ; leave empty to auto-detect by thruster orientation
 
 [horizon]
-correction = 0.5   ; how hard the gyros correct tilt
-damping    = 0.2   ; how hard they brake to prevent overshoot
-threshold  = 0.02  ; tilt dead-band in radians (~1 deg) — no correction below this
+correction = 0.5     ; how hard the gyros correct tilt
+damping    = 0.2     ; how hard they brake to prevent overshoot
+threshold  = 0.02    ; tilt dead-band in radians (~1 deg) — no correction below this
 
 [altitude]
-target     = 1000  ; cruise altitude in metres above terrain
-correction = 0.005 ; thrust fraction added per metre of altitude error
-damping    = 0.01  ; thrust fraction subtracted per m/s of vertical speed
-threshold  = 5     ; altitude dead-band in metres — no PD correction below this
-max_speed  = 15    ; maximum vertical speed in m/s — hard cap on top of PD
-pitch_max  = 5     ; max nose-down angle in degrees when glide-descending
+target     = 1000    ; cruise altitude in metres above terrain
+correction = 0.005   ; thrust fraction added per metre of altitude error
+damping    = 0.01    ; thrust fraction subtracted per m/s of vertical speed
+threshold  = 5       ; altitude dead-band in metres — no PD correction below this
+max_speed  = 15      ; maximum vertical speed in m/s — hard cap on top of PD
+pitch_max  = 5       ; max nose-down angle in degrees when glide-descending
 pitch_min_speed = 20 ; minimum forward speed (m/s) to use glide descent
-pitch_gain = 0.002 ; degrees of nose-down per metre of altitude error
+pitch_gain = 0.002   ; degrees of nose-down per metre of altitude error
+
+[ascend]
+up_group   =         ; block group containing your upward (launch) thrusters
+down_group =         ; block group containing your downward thrusters (disabled during ascent)
 
 [display]
-cockpit_screen = 0 ; which cockpit screen index to write to (0-based)
+cockpit_screen = 0   ; which cockpit screen index to write to (0-based)
 ```
 
-Changes to Custom Data take effect the next time you run `HORIZON_ON`, `ALTITUDE_ON`, `CRUISE_ON`, or `PTA_ON`.
+Changes to Custom Data take effect the next time you run `HORIZON_ON`, `ALTITUDE_ON`, `CRUISE_ON`, `ASCEND_ON`, `DESCEND_ON`, or `PTA_ON`.
 `SET_ALTITUDE` writes the new target directly to Custom Data so it persists across recompiles.
+
+New keys added in a script update are automatically written to Custom Data with their default values on next activation — existing values are never overwritten.
 
 ---
 
@@ -194,9 +251,6 @@ Adjust `pitch_max` (maximum nose-down angle in degrees) and `pitch_gain` (angle 
 ### Altitude response is sluggish
 Raise `correction` in `[altitude]`. On large or heavy ships with few upward thrusters, a higher value is needed.
 
-### No upward thrusters found
-The script identifies upward thrusters by orientation relative to gravity. Make sure the ship is roughly level when enabling altitude hold, and that upward-facing thrusters are powered and functional. In space or without gravity, altitude hold does nothing.
-
 ---
 
 ## Troubleshooting
@@ -209,6 +263,9 @@ The script identifies upward thrusters by orientation relative to gravity. Make 
 | Wrong cockpit screen | Adjust `cockpit_screen` index in `[display]` section |
 | Altitude hold does nothing | No upward-facing thrusters found, or `MaxEffectiveThrust` is zero (no power, wrong atmosphere type, or no atmo) |
 | `SET_ALTITUDE` fails | Not near a planet with a detectable surface |
-| Brake thrusters not restored | Run `PTA_OFF` — it restores all brake thrusters unconditionally regardless of state |
+| Brake thrusters not restored | Run `PTA_OFF` — it restores all brake thrusters unconditionally |
 | Ship drifts in altitude slowly | Increase `correction` in `[altitude]`; the PD correction may be too weak for the ship's mass |
-| Horizon corrects but overshoots repeatedly | The gyros are fighting each other; lower `correction` and raise `damping` |
+| Horizon corrects but overshoots | Lower `correction` and raise `damping` in `[horizon]` |
+| ASCEND MODE UNAVAILABLE | `up_group` or `down_group` not set, no hydrogen thrusters, or tanks empty |
+| DESCEND MODE UNAVAILABLE | No gravity (in space), or `up_group` not set / group not found |
+| Ship doesn't fall during descent | `up_group` name doesn't match any block group — check spelling in Custom Data |
