@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant `v1.6`
+# PTA — Planetary Travel Assistant `v1.7`
 
 Autopilot assistant for planetary flight and orbit transitions. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
@@ -125,7 +125,7 @@ On activation:
 - Disables altitude hold if it was running
 - Enables horizon stabilizer to keep ship level during descent
 
-Auto-completes at 3000 m altitude. At that point the up thrusters are released and horizon is turned off — ready for manual landing approach.
+Auto-completes at the altitude set by `[descend] target` (default 3000 m). At that point the up thrusters are released and horizon is turned off — ready for manual landing approach.
 
 Requires `up_group` to be set in Custom Data.
 
@@ -155,7 +155,7 @@ Manually ends descent mode early. Releases up thruster overrides and gyro contro
 ### Descent from orbit
 1. Make sure `up_group` is set in Custom Data
 2. Press `DESCEND_ON` — ship falls freely under gravity, stays level
-3. At 3000 m descent auto-stops — take manual control for landing
+3. At the configured target altitude descent auto-stops — take manual control for landing
 
 ---
 
@@ -247,6 +247,9 @@ pitch_gain = 0.002   ; degrees of nose-down per metre of altitude error
 [ascend]
 up_group   =         ; block group containing your upward (launch) thrusters
 down_group =         ; block group containing your downward thrusters (disabled during ascent)
+
+[descend]
+target = 3000        ; altitude in metres at which descent auto-completes and hands back control
 
 [display]
 cockpit_screen = 0   ; which cockpit screen index to write to (0-based)

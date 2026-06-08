@@ -21,6 +21,7 @@ private const string SEC_HORIZON  = "horizon";
 private const string SEC_ALTITUDE = "altitude";
 private const string SEC_CRUISE   = "cruise";
 private const string SEC_ASCEND   = "ascend";
+private const string SEC_DESCEND  = "descend";
 private const string SEC_DISPLAY  = "display";
 
 private const float  DEFAULT_HORIZON_CORRECTION  = 0.5f;
@@ -36,6 +37,8 @@ private const float  DEFAULT_ALTITUDE_PITCH_MAX      = 5f;
 private const float  DEFAULT_ALTITUDE_PITCH_MIN_SPEED = 20f;
 private const float  DEFAULT_ALTITUDE_PITCH_GAIN     = 0.002f;
 
+private const float  DEFAULT_DESCEND_TARGET    = 3000f;
+
 private const string DEFAULT_BRAKE_GROUP        = "";
 private const string DEFAULT_ASCEND_UP_GROUP   = "";
 private const string DEFAULT_ASCEND_DOWN_GROUP = "";
@@ -43,7 +46,7 @@ private const int    DEFAULT_COCKPIT_SCREEN     = 0;
 private const string DEFAULT_THEME             = "cyber";
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.6";
+private const string VERSION   = "1.7";
 
 // -------------------------------------------------------------------------
 // Display colors  (mutable — overwritten by ApplyTheme on config load)
@@ -83,6 +86,7 @@ private float  _altitudePitchGain     = DEFAULT_ALTITUDE_PITCH_GAIN;
 private string _brakeGroup       = DEFAULT_BRAKE_GROUP;
 private string _ascendUpGroup   = DEFAULT_ASCEND_UP_GROUP;
 private string _ascendDownGroup = DEFAULT_ASCEND_DOWN_GROUP;
+private float  _descendTarget  = DEFAULT_DESCEND_TARGET;
 private int    _cockpitScreen   = DEFAULT_COCKPIT_SCREEN;
 private string _theme           = DEFAULT_THEME;
 
@@ -1120,7 +1124,7 @@ private void DescendTick()
         return;
     }
 
-    if (altitude <= 3000.0)
+    if (altitude <= _descendTarget)
     {
         CompleteDescend();
         return;
@@ -1143,8 +1147,8 @@ private void CompleteDescend(bool manual = false)
     ReleaseGyros();
     _descendActive = false;
     _descendStatus = "---";
-    if (manual) ShowFlash("DESCEND ABORTED",   "",                       COL_WARN, 8);
-    else        ShowFlash("DESCEND COMPLETE",   "3000 m — MANUAL CONTROL", COL_OK,   8);
+    if (manual) ShowFlash("DESCEND ABORTED",   "",                                              COL_WARN, 8);
+    else        ShowFlash("DESCEND COMPLETE",   _descendTarget.ToString("F0") + " m — MANUAL CONTROL", COL_OK, 8);
     ApplyUpdateFrequency();
     DrawStatus();
 }
@@ -1181,6 +1185,7 @@ private void ParseConfig()
     dirty |= EnsureString(ini, SEC_CRUISE,   "brake_group",     DEFAULT_BRAKE_GROUP,             ref _brakeGroup);
     dirty |= EnsureString(ini, SEC_ASCEND,   "up_group",        DEFAULT_ASCEND_UP_GROUP,         ref _ascendUpGroup);
     dirty |= EnsureString(ini, SEC_ASCEND,   "down_group",      DEFAULT_ASCEND_DOWN_GROUP,       ref _ascendDownGroup);
+    dirty |= EnsureFloat (ini, SEC_DESCEND,  "target",          DEFAULT_DESCEND_TARGET,          ref _descendTarget);
     dirty |= EnsureInt   (ini, SEC_DISPLAY,  "cockpit_screen",  DEFAULT_COCKPIT_SCREEN,          ref _cockpitScreen);
     dirty |= EnsureString(ini, SEC_DISPLAY,  "theme",           DEFAULT_THEME,                   ref _theme);
 
