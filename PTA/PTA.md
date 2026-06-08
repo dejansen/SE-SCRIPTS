@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant `v1.5`
+# PTA — Planetary Travel Assistant `v1.6`
 
 Autopilot assistant for planetary flight and orbit transitions. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
@@ -190,6 +190,22 @@ Multiple screens are supported simultaneously.
 
 ---
 
+## Themes
+
+Set `theme` under `[display]` in Custom Data, then run `PTA_ON` to apply.
+
+| Theme | Look |
+|---|---|
+| `cyber` | Dark navy background, bright cyan accents — default |
+| `amber` | Black background, orange-amber text — classic terminal |
+| `matrix` | Pure black background, vivid green text |
+| `heat` | Very dark red-black background, orange accents |
+| `royal` | Near-black background, purple/violet accents |
+
+Unknown theme names fall back to `cyber`.
+
+---
+
 ## Display Colour Codes
 
 The panel border changes colour to indicate system state.
@@ -234,6 +250,7 @@ down_group =         ; block group containing your downward thrusters (disabled 
 
 [display]
 cockpit_screen = 0   ; which cockpit screen index to write to (0-based)
+theme = cyber        ; colour theme: cyber (default), amber, matrix, heat, royal
 ```
 
 Changes to Custom Data take effect the next time you run `HORIZON_ON`, `ALTITUDE_ON`, `CRUISE_ON`, `ASCEND_ON`, `DESCEND_ON`, or `PTA_ON`.

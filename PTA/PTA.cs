@@ -40,26 +40,28 @@ private const string DEFAULT_BRAKE_GROUP        = "";
 private const string DEFAULT_ASCEND_UP_GROUP   = "";
 private const string DEFAULT_ASCEND_DOWN_GROUP = "";
 private const int    DEFAULT_COCKPIT_SCREEN     = 0;
+private const string DEFAULT_THEME             = "cyber";
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.5";
+private const string VERSION   = "1.6";
 
 // -------------------------------------------------------------------------
-// Display colors  (same palette as AGM for consistency)
+// Display colors  (mutable — overwritten by ApplyTheme on config load)
+// Themes: cyber (default), amber, matrix, heat, royal
 // -------------------------------------------------------------------------
 
-private readonly Color COL_BG      = new Color(  1,  8, 13);
-private readonly Color COL_PANEL   = new Color(  2, 18, 28);
-private readonly Color COL_PANEL2  = new Color(  3, 58, 78);
-private readonly Color COL_ACCENT  = new Color( 38,239,255);
-private readonly Color COL_ACCENT2 = new Color(112,247,255);
-private readonly Color COL_TEXT    = new Color(126,246,255);
-private readonly Color COL_DIM     = new Color( 44,177,195);
-private readonly Color COL_OK      = new Color( 97,255,214);
-private readonly Color COL_WARN    = new Color(255,202, 34);
-private readonly Color COL_BAD     = new Color(255, 79, 66);
-private readonly Color COL_PROG_BG = new Color( 18, 48, 32);
-private readonly Color COL_PROG_FG = new Color(255,204, 36);
+private Color COL_BG      = new Color(  1,  8, 13);
+private Color COL_PANEL   = new Color(  2, 18, 28);
+private Color COL_PANEL2  = new Color(  3, 58, 78);
+private Color COL_ACCENT  = new Color( 38,239,255);
+private Color COL_ACCENT2 = new Color(112,247,255);
+private Color COL_TEXT    = new Color(126,246,255);
+private Color COL_DIM     = new Color( 44,177,195);
+private Color COL_OK      = new Color( 97,255,214);
+private Color COL_WARN    = new Color(255,202, 34);
+private Color COL_BAD     = new Color(255, 79, 66);
+private Color COL_PROG_BG = new Color( 18, 48, 32);
+private Color COL_PROG_FG = new Color(255,204, 36);
 
 // -------------------------------------------------------------------------
 // Config fields
@@ -82,6 +84,7 @@ private string _brakeGroup       = DEFAULT_BRAKE_GROUP;
 private string _ascendUpGroup   = DEFAULT_ASCEND_UP_GROUP;
 private string _ascendDownGroup = DEFAULT_ASCEND_DOWN_GROUP;
 private int    _cockpitScreen   = DEFAULT_COCKPIT_SCREEN;
+private string _theme           = DEFAULT_THEME;
 
 // -------------------------------------------------------------------------
 // State
@@ -1179,8 +1182,88 @@ private void ParseConfig()
     dirty |= EnsureString(ini, SEC_ASCEND,   "up_group",        DEFAULT_ASCEND_UP_GROUP,         ref _ascendUpGroup);
     dirty |= EnsureString(ini, SEC_ASCEND,   "down_group",      DEFAULT_ASCEND_DOWN_GROUP,       ref _ascendDownGroup);
     dirty |= EnsureInt   (ini, SEC_DISPLAY,  "cockpit_screen",  DEFAULT_COCKPIT_SCREEN,          ref _cockpitScreen);
+    dirty |= EnsureString(ini, SEC_DISPLAY,  "theme",           DEFAULT_THEME,                   ref _theme);
+
+    ApplyTheme(_theme);
 
     if (dirty) Me.CustomData = ini.ToString();
+}
+
+private void ApplyTheme(string name)
+{
+    switch (name.ToLower())
+    {
+        case "amber":
+            COL_BG      = new Color( 10,  5,  0);
+            COL_PANEL   = new Color( 22, 10,  0);
+            COL_PANEL2  = new Color( 55, 25,  0);
+            COL_ACCENT  = new Color(255,160,  0);
+            COL_ACCENT2 = new Color(255,210, 80);
+            COL_TEXT    = new Color(255,185, 55);
+            COL_DIM     = new Color(160,100,  0);
+            COL_OK      = new Color(180,255, 80);
+            COL_WARN    = new Color(255,230,  0);
+            COL_BAD     = new Color(255, 60, 30);
+            COL_PROG_BG = new Color( 20, 10,  0);
+            COL_PROG_FG = new Color(255,160,  0);
+            break;
+        case "matrix":
+            COL_BG      = new Color(  0,  5,  0);
+            COL_PANEL   = new Color(  0, 14,  0);
+            COL_PANEL2  = new Color(  0, 40,  0);
+            COL_ACCENT  = new Color(  0,220,  0);
+            COL_ACCENT2 = new Color(100,255,100);
+            COL_TEXT    = new Color( 80,240, 80);
+            COL_DIM     = new Color(  0,120,  0);
+            COL_OK      = new Color(150,255,100);
+            COL_WARN    = new Color(255,200,  0);
+            COL_BAD     = new Color(255, 60, 60);
+            COL_PROG_BG = new Color(  0, 20,  0);
+            COL_PROG_FG = new Color(  0,220,  0);
+            break;
+        case "heat":
+            COL_BG      = new Color( 10,  2,  0);
+            COL_PANEL   = new Color( 24,  6,  0);
+            COL_PANEL2  = new Color( 55, 16,  0);
+            COL_ACCENT  = new Color(255,100,  0);
+            COL_ACCENT2 = new Color(255,165, 55);
+            COL_TEXT    = new Color(255,145, 65);
+            COL_DIM     = new Color(165, 62,  0);
+            COL_OK      = new Color(100,255,160);
+            COL_WARN    = new Color(255,220,  0);
+            COL_BAD     = new Color(255, 50, 30);
+            COL_PROG_BG = new Color( 22,  5,  0);
+            COL_PROG_FG = new Color(255,100,  0);
+            break;
+        case "royal":
+            COL_BG      = new Color(  6,  2, 14);
+            COL_PANEL   = new Color( 13,  5, 28);
+            COL_PANEL2  = new Color( 32, 12, 65);
+            COL_ACCENT  = new Color(185, 80,255);
+            COL_ACCENT2 = new Color(215,145,255);
+            COL_TEXT    = new Color(205,155,255);
+            COL_DIM     = new Color(115, 62,165);
+            COL_OK      = new Color(100,255,165);
+            COL_WARN    = new Color(255,200, 80);
+            COL_BAD     = new Color(255, 80, 80);
+            COL_PROG_BG = new Color( 13,  5, 28);
+            COL_PROG_FG = new Color(185, 80,255);
+            break;
+        default: // cyber
+            COL_BG      = new Color(  1,  8, 13);
+            COL_PANEL   = new Color(  2, 18, 28);
+            COL_PANEL2  = new Color(  3, 58, 78);
+            COL_ACCENT  = new Color( 38,239,255);
+            COL_ACCENT2 = new Color(112,247,255);
+            COL_TEXT    = new Color(126,246,255);
+            COL_DIM     = new Color( 44,177,195);
+            COL_OK      = new Color( 97,255,214);
+            COL_WARN    = new Color(255,202, 34);
+            COL_BAD     = new Color(255, 79, 66);
+            COL_PROG_BG = new Color( 18, 48, 32);
+            COL_PROG_FG = new Color(255,204, 36);
+            break;
+    }
 }
 
 private bool EnsureFloat(MyIni ini, string sec, string key, float def, ref float field)
