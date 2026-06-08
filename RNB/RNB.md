@@ -9,18 +9,14 @@ RNB is a Space Engineers Programmable Block script for the **SKO Nanobot Build a
 
 1. Place a Programmable Block on the same construct as the BaR welders.
 2. Paste `RNB.cs` into the PB and click **Check Code**.
-3. Add RNB roles/pages with either block names or Custom Data.
+3. Add RNB roles/pages via Custom Data (recommended) or block name tags.
 4. Recompile or wait for the automatic rescan.
 
-No toolbar arguments are used. The script is automatic.
+No toolbar arguments are used. The script is fully automatic.
 
-## Recommended Custom Data
+## Custom Data Setup (recommended — keeps block names clean)
 
-Custom Data is the cleanest setup because it keeps block names readable. Name tags still work as a fallback.
-
-### PB Custom Data
-
-Put this in the Programmable Block Custom Data only if you want to override defaults:
+### Programmable Block
 
 ```ini
 [RNB]
@@ -32,93 +28,55 @@ AutoOfflineSeconds=600
 
 | Setting | Default | Notes |
 |---|---:|---|
-| `BootSeconds` | `6` | Boot screen duration. Minimum `0.5`, maximum `60`. |
+| `BootSeconds` | `6` | Boot screen duration. Min `0.5`, max `60`. |
 | `RescanSeconds` | `10` | How often block roles/pages are rescanned. |
 | `AssemblerQueueSeconds` | `0.5` | How often missing parts are pushed to assemblers. |
-| `AutoOfflineSeconds` | `600` | Idle time before BaR welders are disabled. |
+| `AutoOfflineSeconds` | `600` | Idle time before BaR welders are disabled (600 = 10 min). |
 
-### LCD Custom Data
+### Functional blocks
 
-Put this in any LCD Custom Data:
-
-```ini
-[RNB]
-Page=Missing
-```
-
-Valid pages:
-
-```text
-Status
-Missing
-Weld
-Grind
-Welders
-Assemblers
-Projectors
-```
-
-### Functional Block Custom Data
-
-Put this in assembler, welder, light, or projector Custom Data:
-
-```ini
-[RNB]
-Role=Assembler
-```
-
-Valid roles:
-
-```text
-Assembler
-BasicAssembler
-NanoBot
-Alert
-Projector
-```
-
-Examples:
-
-```ini
-[RNB]
-Role=BasicAssembler
-```
+| Role value | Block type | What it does |
+|---|---|---|
+| `Role=NanoBot` | BaR welder | Explicit BaR/NanoBot selection. |
+| `Role=Assembler` | Assembler | Advanced assembler pool. |
+| `Role=BasicAssembler` | Basic Assembler | Basic component pool. |
+| `Role=Alert` | Light | State colour and blink. |
+| `Role=Corner` | LCD panel | Large readable state display for command centre. |
+| `Role=Projector` | Projector | Projector progress tracking. |
 
 ```ini
 [RNB]
 Role=NanoBot
 ```
 
+### LCD pages
+
 ```ini
 [RNB]
-Role=Projector
+Page=Status
 ```
+
+Valid pages: `Status` `Missing` `Weld` `Grind` `Welders` `Assemblers` `Projectors`
 
 ## Name Tag Fallback
 
-If you prefer block-name tags, these still work.
+Name tags still work if preferred. Custom Data takes priority.
 
-### Functional Blocks
-
-| Name tag | Block type | What it does |
-|---|---|---|
-| `[RNBAssembler]` | Assembler | Advanced assembler pool. |
-| `[RNBBasicAssembler]` | Basic Assembler | Basic component pool. |
-| `[NanoBot]` | BaR welder | Explicit BaR/NanoBot selection. |
-| `[RNBAlert]` | Light | State colour and blink. |
-| `[RNBProjector]` | Projector | Projector progress tracking. |
-
-### LCD Pages
-
-| Name tag | Page |
+| Name tag | Block type |
 |---|---|
-| `[RNBStatus]` | System overview |
-| `[RNBMissing]` | Missing components |
-| `[RNBWeld]` | Weld queue |
-| `[RNBGrind]` | Grind queue |
-| `[RNBWelders]` | Welder details |
-| `[RNBAssemblers]` | Assembler details |
-| `[RNBProjectors]` | Projector progress |
+| `[NanoBot]` | BaR welder |
+| `[RNBAssembler]` | Advanced assembler |
+| `[RNBBasicAssembler]` | Basic assembler |
+| `[RNBAlert]` | Light |
+| `[RNBCorner]` | Corner LCD |
+| `[RNBProjector]` | Projector |
+| `[RNBStatus]` | Status LCD |
+| `[RNBMissing]` | Missing parts LCD |
+| `[RNBWeld]` | Weld queue LCD |
+| `[RNBGrind]` | Grind queue LCD |
+| `[RNBWelders]` | Welder detail LCD |
+| `[RNBAssemblers]` | Assembler detail LCD |
+| `[RNBProjectors]` | Projector progress LCD |
 
 ## Page Reference
 
@@ -132,11 +90,22 @@ If you prefer block-name tags, these still work.
 | `Assemblers` | Per-assembler mode, enabled state, output count, repeat, and coop. |
 | `Projectors` | Per-projector build progress and remaining blocks. |
 
+## Corner LCD
+
+`Role=Corner` turns any LCD into a large at-a-glance state display for use in a command centre or at a distance. It shows:
+
+- Large centred state label: **WORKING** / **MISSING** / **OFFLINE** / **IDLE**
+- One line of context below (welder count, missing part count, etc.)
+- Border colour matches the alert light state
+- Tiny `RNB` label top-left and idle timer top-right
+
+Works on any LCD size. Font scales automatically for small vs large panels.
+
 ## Display Style
 
-- PB surface 0 shows a centred boot screen first, then a compact live overview.
-- Tagged/configured LCDs show fixed pages with a dark navy panel, cyan frame, and monospace text.
-- The boot loading bar uses a separate centred bar with no internal divider line.
+- PB surface 0 shows a boot screen on compile, then a compact live overview.
+- Standard LCDs show fixed pages with a dark navy panel, cyan frame, and monospace text.
+- Corner LCD shows large state text only — designed to be readable from across a room.
 
 ## Assembler Routing
 
@@ -147,27 +116,25 @@ SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube,
 Motor, Display, BulletproofGlass, Girder
 ```
 
-Advanced assemblers receive everything else.
-
-If a block is marked `BasicAssembler`, that wins. Otherwise RNB can infer basic vs advanced from the assembler subtype.
+Advanced assemblers receive everything else. If a block is tagged `BasicAssembler`, that wins over subtype detection.
 
 ## Auto-Offline
 
-RNB disables BaR welders after `AutoOfflineSeconds` with no weld, grind, collect, or active projector work. If you manually re-enable a welder later, RNB clears the offline state automatically.
+RNB disables BaR welders after `AutoOfflineSeconds` of no weld, grind, collect, or active projector work. Manually re-enabling a welder clears the offline state automatically.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | No BaR welders found | BaR mod installed, maintained SKO fork, same construct, or `Role=NanoBot`. |
-| LCD black | Recompile PB, or confirm LCD Custom Data has `[RNB]` and valid `Page=`. |
+| LCD black | Recompile PB, confirm Custom Data has `[RNB]` section and valid `Page=` or `Role=`. |
 | Wrong LCD page | Custom Data `Page=` overrides name tags. Check spelling. |
-| No assembler queue | Add `Role=Assembler` or `Role=BasicAssembler`, and confirm assembler is functional. |
+| No assembler queue | Add `Role=Assembler` or `Role=BasicAssembler`, confirm assembler is functional. |
+| Corner LCD garbled | Use `Role=Corner` not a page tag — corner LCD ignores `Page=`. |
 | Projector idle | Blueprint complete or no blueprint loaded. |
-| Welders disabled | Auto-offline fired; manually re-enable a BaR welder or raise `AutoOfflineSeconds`. |
+| Welders disabled | Auto-offline fired; re-enable a BaR welder or raise `AutoOfflineSeconds`. |
 
-## Compatibility Notes
+## Compatibility
 
-- Requires SKO maintained BaR properties such as `BuildAndRepair.MissingComponents`, `BuildAndRepair.PossibleTargets`, and `BuildAndRepair.ProductionBlock.EnsureQueued`.
-- Uses only Space Engineers programmable block safe APIs.
-- No pasted RNB image/logo Custom Data is supported; the logo is drawn natively as text for reliability.
+- Requires SKO maintained BaR properties: `BuildAndRepair.MissingComponents`, `BuildAndRepair.PossibleTargets`, `BuildAndRepair.ProductionBlock.EnsureQueued`.
+- Uses only SE programmable block safe APIs.

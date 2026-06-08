@@ -1,6 +1,6 @@
 # RNB-Claude.md — AI Agent Instructions
 
-Guidelines for AI coding agents working on `RNB.cs`.  
+Guidelines for AI coding agents working on `RNB.cs`.
 Script: **RNB — Rev NanoBot Manager v1.0.0**
 Author: RevGamer
 
@@ -14,36 +14,29 @@ The game wraps all code in `public sealed class Program : MyGridProgram { }`. Ne
 
 ---
 
-## Always Read First
-
-Read `SE-SCRIPTING-RULES.md` before any edit — authoritative on whitelisted APIs, C# 6 constraints, and known pitfalls.
-
----
-
 ## Architecture
 
 ```
 Program()                Constructor — grabs PB surface, calls Initialise(), draws boot
-Main(unused, src)        Entry point every ~167ms (Update10); no toolbar input is used
-  └─ Boot stage          Runs DrawBootScreen() for configured boot seconds, then sets Ready
+Main(unused, src)        Entry point every ~167ms (Update10); no toolbar input used
+  └─ Boot stage          Runs DrawBootScreen() for configured seconds, then sets Ready
   └─ Normal stage        State update → RefreshProjectors → CheckAssemblerQueues
-                         → UpdateAlertLights → DrawDisplays → DrawPBScreen
+                         → UpdateAlertLights → DrawDisplays → DrawCornerLcds → DrawPBScreen
 
 Initialise()             Loads PB config, scans Custom Data roles/pages and name-tag fallbacks
-TagToPage()              Maps block name to PageKind via LCD tag constants
-RefreshProjectors()      Updates ProjectorInfo each tick from TotalBlocks/RemainingBlocks
-RefreshBaRData()         Reads BaR mod state once per tick for state/pages/queueing
+TagToPage()              Maps block to PageKind via Custom Data Page= or LCD tag constants
+RefreshProjectors()      Updates ProjectorInfo each tick
+RefreshBaRData()         Reads BaR mod state once per tick
 CheckAssemblerQueues()   Routes cached missing components to correct assembler pool
-  └─ IsBasicComponent()  Returns true if subtype is in BASIC_COMPONENTS[]
-EnsureAssemblyMode()     Fixes assemblers stuck in Disassembly mode
-UpdateAlertLights()      Sets colour/blink on [RNBAlert] lights
-DrawDisplays()           Calls DrawPage() for each DisplayEntry
-DrawPage()               Header + footer frame, delegates to page method
-DrawBootScreen()         Animated boot sequence on PB surface 0
+UpdateAlertLights()      Sets colour/blink on Role=Alert lights
+DrawDisplays()           Calls DrawPageClean() for each DisplayEntry
+DrawPageClean()          Header + footer frame, delegates to page draw method
+DrawCornerLcds()         Large readable state-only display for command centres
+DrawBootSurfaceClean()   Boot animation on PB surface and LCDs
 DrawPBScreen()           Compact live status on PB surface 0 after boot
-DrawStatusPage()         System overview page
+DrawStatusPage()         System overview
 DrawMissingPage()        Missing components list
-DrawListPage()           Shared weld/grind queue list (title param differentiates)
+DrawListPage()           Shared weld/grind queue list
 DrawWeldersPage()        Per-welder status detail
 DrawAssemblersPage()     Per-assembler status detail
 DrawProjectorsPage()     Per-projector build progress
@@ -53,15 +46,19 @@ DrawProjectorsPage()     Per-projector build progress
 
 ## Custom Data And Name Tags
 
-Preferred block configuration is Custom Data:
+All block configuration is via Custom Data `[RNB]` section. Name tags are a fallback only.
 
 ```ini
 [RNB]
 Role=Assembler
+```
+
+```ini
+[RNB]
 Page=Status
 ```
 
-PB Custom Data supports:
+PB Custom Data:
 
 ```ini
 [RNB]
@@ -71,31 +68,62 @@ AssemblerQueueSeconds=0.5
 AutoOfflineSeconds=600
 ```
 
-Valid roles are `Assembler`, `BasicAssembler`, `NanoBot`, `Alert`, and `Projector`.
-Valid pages are `Status`, `Missing`, `Weld`, `Grind`, `Welders`, `Assemblers`, and `Projectors`.
+### Valid Roles
 
-Name tags below remain fallback-compatible.
-
-| Constant | Value | Purpose |
+| Role | Block type | Notes |
 |---|---|---|
-| `TAG_ASSEMBLER` | `[RNBAssembler]` | Advanced assembler |
-| `TAG_BASIC_ASSEMBLER` | `[RNBBasicAssembler]` | Basic assembler — explicit override |
-| `TAG_NANOBOT` | `[NanoBot]` | Preferred explicit BaR/Nanobot detection tag |
-| `TAG_ALERT` | `[RNBAlert]` | Light block |
-| `TAG_PROJECTOR` | `[RNBProjector]` | Projector |
-| `TAG_LCD_STATUS` | `[RNBStatus]` | Status page |
-| `TAG_LCD_MISSING` | `[RNBMissing]` | Missing components page |
-| `TAG_LCD_WELD` | `[RNBWeld]` | Weld queue page |
-| `TAG_LCD_GRIND` | `[RNBGrind]` | Grind queue page |
-| `TAG_LCD_WELDERS` | `[RNBWelders]` | Welder detail page |
-| `TAG_LCD_ASSEMBLERS` | `[RNBAssemblers]` | Assembler detail page |
-| `TAG_LCD_PROJECTORS` | `[RNBProjectors]` | Projector page |
+| `NanoBot` | BaR welder | Explicit BaR selection; falls back to auto-detect if none tagged |
+| `Assembler` | Assembler | Advanced assembler pool |
+| `BasicAssembler` | Assembler | Basic component pool only |
+| `Alert` | Light | State colour + blink |
+| `Corner` | LCD | Large state-only display — see Corner LCD section |
+| `Projector` | Projector | Build progress tracking |
 
-`TagToPage()` checks longest/most-specific tags first to prevent substring false-matches — `[RNBAssemblers]` before `[RNBAssembler]`, `[RNBProjectors]` before `[RNBProjector]`, `[RNBWelders]` before `[RNBWeld]`.
+### Valid Pages
 
-`[RNBBasicAssembler]` takes priority over `[RNBAssembler]` — `hasBasicTag` is checked first, and `hasAdvancedTag = !hasBasicTag && n.Contains(TAG_ASSEMBLER)` prevents double-registration.
+`Status` `Missing` `Weld` `Grind` `Welders` `Assemblers` `Projectors`
 
-BaR welders can be explicitly tagged `[NanoBot]`. If any valid `[NanoBot]` welders exist, RNB uses only those. If none are tagged, it falls back to auto-detecting all same-construct welders responding to `GetValueBool("BuildAndRepair.ScriptControlled")`.
+### Name Tag Constants
+
+| Constant | Value |
+|---|---|
+| `TAG_ASSEMBLER` | `[RNBAssembler]` |
+| `TAG_BASIC_ASSEMBLER` | `[RNBBasicAssembler]` |
+| `TAG_NANOBOT` | `[NanoBot]` |
+| `TAG_ALERT` | `[RNBAlert]` |
+| `TAG_CORNER_LCD` | `[RNBCorner]` |
+| `TAG_PROJECTOR` | `[RNBProjector]` |
+| `TAG_LCD_STATUS` | `[RNBStatus]` |
+| `TAG_LCD_MISSING` | `[RNBMissing]` |
+| `TAG_LCD_WELD` | `[RNBWeld]` |
+| `TAG_LCD_GRIND` | `[RNBGrind]` |
+| `TAG_LCD_WELDERS` | `[RNBWelders]` |
+| `TAG_LCD_ASSEMBLERS` | `[RNBAssemblers]` |
+| `TAG_LCD_PROJECTORS` | `[RNBProjectors]` |
+
+`TagToPage()` checks longest tags first — `[RNBAssemblers]` before `[RNBAssembler]` etc.
+
+---
+
+## Corner LCD
+
+`DrawCornerLcds()` renders a large at-a-glance state display for wide/small LCDs in a command centre. It does **not** render any page content — text only:
+
+- Large centred state label (scale 1.6f): `WORKING` / `MISSING` / `OFFLINE` / `IDLE`
+- Sub-line below: welder count, missing part count, or offline reason
+- Coloured 3px border matching the alert light state colour
+- Small `RNB` label top-left, elapsed idle timer top-right
+
+**State to colour/subline mapping:**
+
+| State | Border | Sub-line |
+|---|---|---|
+| Working | COL_GREEN | Welders: X/Y |
+| Missing | COL_RED | N part types needed |
+| Offline | COL_AMBER | Idle timeout - welders off |
+| Idle | COL_DIM | Welders: X/Y |
+
+**Do not pass a `PageKind` to `DrawCornerLcds()`.** It determines all display content from `_state` directly. No page draws, no list draws, no progress bars.
 
 ---
 
@@ -103,51 +131,38 @@ BaR welders can be explicitly tagged `[NanoBot]`. If any valid `[NanoBot]` welde
 
 | Field | Type | Role |
 |---|---|---|
-| `_welders` | `BaRHandler` | Wraps all auto-detected BaR welders |
+| `_welders` | `BaRHandler` | All detected BaR welders |
 | `_assemblerIds` | `List<long>` | All tagged assembler EntityIds |
-| `_assemblers` | `List<IMyAssembler>` | Tagged assembler block references from the last scan |
-| `_basicAssemblerIds` | `List<long>` | Basic assembler EntityIds only |
-| `_advancedAssemblerIds` | `List<long>` | Advanced assembler EntityIds only |
-| `_weldTargets` | `List<IMySlimBlock>` | Cached BaR weld queue for current tick |
-| `_grindTargets` | `List<IMySlimBlock>` | Cached BaR grind queue for current tick |
-| `_collectTargets` | `List<IMyEntity>` | Cached BaR collect targets for current tick |
-| `_missing` | `Dictionary<MyDefinitionId, int>` | Cached missing components for current tick |
-| `_displays` | `List<DisplayEntry>` | All registered LCD surfaces |
-| `_alertLights` | `List<IMyLightingBlock>` | All `[RNBAlert]` lights |
-| `_projectors` | `List<ProjectorInfo>` | All `[RNBProjector]` projectors |
-| `_pbSurface` | `IMyTextSurface` | PB's own surface 0 — boot + live screen |
-| `_bootStage` | `BootStage` | Booting / Ready enum |
-| `_bootElapsed` | `double` | Seconds since script start for boot timer |
-| `_bootProgress` | `float` | 0–1 boot bar fill |
+| `_assemblers` | `List<IMyAssembler>` | Tagged assembler references |
+| `_basicAssemblerIds` | `List<long>` | Basic assembler EntityIds |
+| `_advancedAssemblerIds` | `List<long>` | Advanced assembler EntityIds |
+| `_displays` | `List<DisplayEntry>` | All registered page LCD surfaces |
+| `_cornerLcds` | `List<IMyTextSurface>` | All Role=Corner LCD surfaces |
+| `_alertLights` | `List<IMyLightingBlock>` | All Role=Alert lights |
+| `_projectors` | `List<ProjectorInfo>` | All Role=Projector projectors |
+| `_pbSurface` | `IMyTextSurface` | PB surface 0 |
 | `_state` | `RNBState` | Working / Idle / Offline / Missing |
-| `_isOffline` | `bool` | True when welders disabled |
-| `_weldPeak` | `int` | Peak weld queue count for progress bar |
-| `_weldPrev` | `int` | Previous tick queue count — detects new job |
-| `_elapsed` | `double` | Accumulated seconds since script start |
-| `_lastActivityTime` | `double` | `_elapsed` at last tick with any BaR targets |
+| `_weldTargets` | `List<IMySlimBlock>` | Cached BaR weld queue |
+| `_grindTargets` | `List<IMySlimBlock>` | Cached BaR grind queue |
+| `_missing` | `Dictionary<MyDefinitionId, int>` | Cached missing components |
+| `_weldPeak` | `int` | Peak queue count for progress bar latch |
+| `_elapsed` | `double` | Accumulated seconds since start |
+| `_lastActivityTime` | `double` | `_elapsed` at last tick with BaR activity |
 
 ---
 
 ## Assembler Routing Logic
 
 ```
-CheckAssemblerQueues()
-  use cached _missing from RefreshBaRData()
-  for each missing component:
-    basicCanMake = IsBasicComponent(subtype)
-    if basicCanMake && _basicAssemblerIds.Count > 0:
-      targets = _basicAssemblerIds
-    else if _advancedAssemblerIds.Count > 0:
-      targets = _advancedAssemblerIds
-    else:
-      targets = _assemblerIds  // fallback
-    EnsureQueued(targets, componentId, amount)
+for each missing component:
+  basicCanMake = IsBasicComponent(subtype)
+  if basicCanMake && _basicAssemblerIds.Count > 0 → _basicAssemblerIds
+  else if _advancedAssemblerIds.Count > 0         → _advancedAssemblerIds
+  else                                             → _assemblerIds (fallback)
+  EnsureQueued(targets, componentId, amount)
 ```
 
-`BASIC_COMPONENTS[]` — vanilla subtypes a basic assembler can produce:
-`SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube, Motor, Display, BulletproofGlass, Girder`
-
-`AssemblerQueueSeconds` in PB Custom Data controls how often production queueing runs. Default is 0.5 seconds for responsive missing-part production without running every Update10 tick.
+Basic components: `SteelPlate InteriorPlate Construction SmallTube LargeTube Motor Display BulletproofGlass Girder`
 
 ---
 
@@ -155,97 +170,49 @@ CheckAssemblerQueues()
 
 All via `IMyShipWelder.GetValue<T>(string)` — always wrap in try/catch.
 
-| Property | Type | Notes |
-|---|---|---|
-| `BuildAndRepair.ScriptControlled` | bool | Detection probe |
-| `BuildAndRepair.CurrentTarget` | IMySlimBlock | Block being welded |
-| `BuildAndRepair.CurrentGrindTarget` | IMySlimBlock | Block being ground |
-| `BuildAndRepair.PossibleTargets` | List\<IMySlimBlock\> | Weldable blocks in range |
-| `BuildAndRepair.PossibleGrindTargets` | List\<IMySlimBlock\> | Grindable blocks in range |
-| `BuildAndRepair.PossibleCollectTargets` | List\<IMyEntity\> | Floating items in range |
-| `BuildAndRepair.MissingComponents` | Dictionary\<MyDefinitionId, int\> | Missing amounts |
-| `BuildAndRepair.ProductionBlock.EnsureQueued` | Func\<IEnumerable\<long\>, MyDefinitionId, int, int\> | Queue into assembler |
+| Property | Type |
+|---|---|
+| `BuildAndRepair.ScriptControlled` | bool |
+| `BuildAndRepair.CurrentTarget` | IMySlimBlock |
+| `BuildAndRepair.CurrentGrindTarget` | IMySlimBlock |
+| `BuildAndRepair.PossibleTargets` | List\<IMySlimBlock\> |
+| `BuildAndRepair.PossibleGrindTargets` | List\<IMySlimBlock\> |
+| `BuildAndRepair.PossibleCollectTargets` | List\<IMyEntity\> |
+| `BuildAndRepair.MissingComponents` | Dictionary\<MyDefinitionId, int\> |
+| `BuildAndRepair.ProductionBlock.EnsureQueued` | Func\<IEnumerable\<long\>, MyDefinitionId, int, int\> |
 
 ---
 
-## Whitelisted API Facts
-
-### Projector
-- `TotalBlocks` ✅ `RemainingBlocks` ✅ `RemainingArmorBlocks` ✅
-- `BuildProgress` ❌ `IsProjecting` ❌
-
-### Assembler
-- `Mode` ✅ `CooperativeMode` ✅ `Repeating` ✅ `OutputInventory` ✅
-- `MyResourceSinkComponent` ❌ `MyResourceDistributorComponent` ❌
-
-### Power
-- `IMyBatteryBlock` ✅ — `CurrentStoredPower`, `MaxStoredPower`, `ChargeMode`
-- Power draw via `ResourceSink` ❌ — not whitelisted
-
----
-
-## GetBlocksOfType Rule
-
-Never use a predicate — returns `MemorySafeList<T>` which cannot assign to `List<T>`. Filter in the loop:
+## SE Constraints
 
 ```csharp
-// CORRECT
-GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(_wBuf);
-for (int i = 0; i < _wBuf.Count; i++)
-{
-    if (!_wBuf[i].IsSameConstructAs(Me)) continue;
-    // work
-}
-
-// WRONG — compile error
-GridTerminalSystem.GetBlocksOfType<IMyShipWelder>(_wBuf, b => b.IsSameConstructAs(Me));
+$"hello {name}"         // no string interpolation → "hello " + name
+(string a, int b) Foo() // no tuples → use a class
+out var x               // no out var → explicit type
+static int _field       // no static fields → memory leak
 ```
 
----
-
-## CustomName Rule
-
-`IMyCubeBlock` does not have `CustomName`. Always cast to `IMyTerminalBlock` first:
-
-```csharp
-var tb = block as IMyTerminalBlock;
-string name = tb != null ? tb.CustomName : "fallback";
-```
-
-`_tBuf` is `List<IMyTerminalBlock>` — safe to access `.CustomName` directly there.
+`GetBlocksOfType` — never use lambda predicate, filter in loop instead.
+`CustomName` — only on `IMyTerminalBlock`, not `IMyCubeBlock`.
+`MySprite` text field is `Data`, not `Id`.
 
 ---
 
-## Drawing Rules
+## Adding a New Role or Page
 
-- `PrepSurface()` sets `ContentType.SCRIPT` + `ScriptBackgroundColor` — call on every new surface.
-- Fill background first with a full-size `SquareSimple` rect.
-- Use `using (var frame = s.DrawFrame()) { }` — Dispose called automatically.
-- `MySprite` field for both texture name and text is `Data` — **`Id` does not exist**.
-- All drawing goes through `DrawRect()`, `DrawText()`, `DrawRow()`, `DrawProgressBar()`.
+**New Role:**
+1. Add `TAG_MYROLE = "[RNBMyRole]"` constant
+2. Add scan block in `Initialise()` using `HasRnbRole(tb, TAG_MYROLE, "MyRole")`
+3. Add list field and clear it in `Initialise()`
 
----
-
-## C# 6 Constraints
-
-```csharp
-$"hello {name}"         // ❌ no string interpolation → use "hello " + name
-(string a, int b) Foo() // ❌ no tuple returns → use a class
-out var x               // ❌ no out var → use explicit type
-static int _field       // ❌ no static fields → memory leak in SE sandbox
-```
-
----
-
-## Adding a New Page
-
+**New Page:**
 1. Add `TAG_LCD_MYPAGE = "[RNBMyPage]"` constant
 2. Add `MyPage` to `enum PageKind`
 3. Add to `TagToPage()` — before any tag it could substring-match
-4. Add `case PageKind.MyPage:` in `DrawPage()` switch
+4. Add `case PageKind.MyPage:` in `DrawPageClean()` switch
 5. Add `case PageKind.MyPage: return "MYPAGE";` in `PageLabel()`
-6. Implement `DrawMyPagePage(MySpriteDrawFrame frame, float ox, float top, float W, float H)`
-7. Update `RNB.md`
+6. Implement `DrawMyPagePage(MySpriteDrawFrame, float ox, float top, float W, float H)`
+7. Update `RNB.md` and `RNB-Claude.md`
 
 ---
 
@@ -255,5 +222,4 @@ static int _field       // ❌ no static fields → memory leak in SE sandbox
 RNB.cs          Paste into Programmable Block
 RNB.md          User-facing setup and reference
 RNB-Claude.md   This file — AI agent instructions
-SE-SCRIPTING-RULES.md   Authoritative SE PB scripting rules
 ```
