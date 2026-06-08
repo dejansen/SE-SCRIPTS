@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant `v1.2`
+# PTA — Planetary Travel Assistant `v1.3`
 
 Autopilot assistant for planetary flight. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
@@ -7,7 +7,7 @@ Autopilot assistant for planetary flight. Features can be enabled independently 
 ## Features
 
 - **Horizon stabilizer** — uses gyro override to keep the ship level with the planetary horizon. Corrects pitch and roll; releases gyros when already aligned so manual control is unaffected.
-- **Cruise altitude** — uses upward thruster override to hold a fixed altitude above the terrain surface. Adapts automatically to mountains and valleys.
+- **Cruise altitude** — uses upward thruster override to hold a fixed altitude above the terrain surface. Adapts automatically to mountains and valleys. When descending at speed, pitches the nose down for a natural glide rather than firing down thrusters; falls back to thrust-based descent at low speed.
 - **Cruise mode** — convenience command that disables brake thrusters (so the ship coasts freely) and enables both horizon and altitude hold in one press.
 - **Display** — animated boot screen on startup, live status panel with colour-coded state, shown on any tagged LCD or cockpit screen.
 
@@ -167,6 +167,9 @@ correction = 0.005 ; thrust fraction added per metre of altitude error
 damping    = 0.01  ; thrust fraction subtracted per m/s of vertical speed
 threshold  = 5     ; altitude dead-band in metres — no PD correction below this
 max_speed  = 15    ; maximum vertical speed in m/s — hard cap on top of PD
+pitch_max  = 5     ; max nose-down angle in degrees when glide-descending
+pitch_min_speed = 20 ; minimum forward speed (m/s) to use glide descent
+pitch_gain = 0.002 ; degrees of nose-down per metre of altitude error
 
 [display]
 cockpit_screen = 0 ; which cockpit screen index to write to (0-based)
@@ -184,6 +187,9 @@ Lower `correction` or raise `damping` in `[horizon]`. A value of `0.2` for dampi
 
 ### Altitude overshoots or bobs
 Lower `correction` or raise `damping` in `[altitude]`. Start by halving `correction`.
+
+### Glide descent feels too steep or too shallow
+Adjust `pitch_max` (maximum nose-down angle in degrees) and `pitch_gain` (angle per metre of altitude error) in `[altitude]`. Raise `pitch_min_speed` if you only want glide to activate at higher cruise speeds.
 
 ### Altitude response is sluggish
 Raise `correction` in `[altitude]`. On large or heavy ships with few upward thrusters, a higher value is needed.

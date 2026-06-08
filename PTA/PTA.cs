@@ -17,23 +17,29 @@
 private const string SEC_HORIZON  = "horizon";
 private const string SEC_ALTITUDE = "altitude";
 private const string SEC_CRUISE   = "cruise";
+private const string SEC_ASCEND   = "ascend";
 private const string SEC_DISPLAY  = "display";
 
 private const float  DEFAULT_HORIZON_CORRECTION  = 0.5f;
 private const float  DEFAULT_HORIZON_DAMPING     = 0.2f;
 private const float  DEFAULT_HORIZON_THRESHOLD   = 0.02f;
 
-private const float  DEFAULT_ALTITUDE_TARGET     = 1000f;
-private const float  DEFAULT_ALTITUDE_CORRECTION = 0.005f;
-private const float  DEFAULT_ALTITUDE_DAMPING    = 0.01f;
-private const float  DEFAULT_ALTITUDE_THRESHOLD  = 5f;
-private const float  DEFAULT_ALTITUDE_MAX_SPEED  = 15f;
+private const float  DEFAULT_ALTITUDE_TARGET         = 1000f;
+private const float  DEFAULT_ALTITUDE_CORRECTION     = 0.005f;
+private const float  DEFAULT_ALTITUDE_DAMPING        = 0.01f;
+private const float  DEFAULT_ALTITUDE_THRESHOLD      = 5f;
+private const float  DEFAULT_ALTITUDE_MAX_SPEED      = 15f;
+private const float  DEFAULT_ALTITUDE_PITCH_MAX      = 5f;
+private const float  DEFAULT_ALTITUDE_PITCH_MIN_SPEED = 20f;
+private const float  DEFAULT_ALTITUDE_PITCH_GAIN     = 0.002f;
 
-private const string DEFAULT_BRAKE_GROUP   = "";
-private const int    DEFAULT_COCKPIT_SCREEN = 0;
+private const string DEFAULT_BRAKE_GROUP        = "";
+private const string DEFAULT_ASCEND_UP_GROUP   = "";
+private const string DEFAULT_ASCEND_DOWN_GROUP = "";
+private const int    DEFAULT_COCKPIT_SCREEN     = 0;
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.2";
+private const string VERSION   = "1.3";
 
 // -------------------------------------------------------------------------
 // Display colors  (same palette as AGM for consistency)
@@ -60,24 +66,32 @@ private float  _horizonCorrection  = DEFAULT_HORIZON_CORRECTION;
 private float  _horizonDamping     = DEFAULT_HORIZON_DAMPING;
 private float  _horizonThreshold   = DEFAULT_HORIZON_THRESHOLD;
 
-private float  _altitudeTarget     = DEFAULT_ALTITUDE_TARGET;
-private float  _altitudeCorrection = DEFAULT_ALTITUDE_CORRECTION;
-private float  _altitudeDamping    = DEFAULT_ALTITUDE_DAMPING;
-private float  _altitudeThreshold  = DEFAULT_ALTITUDE_THRESHOLD;
-private float  _altitudeMaxSpeed   = DEFAULT_ALTITUDE_MAX_SPEED;
+private float  _altitudeTarget        = DEFAULT_ALTITUDE_TARGET;
+private float  _altitudeCorrection    = DEFAULT_ALTITUDE_CORRECTION;
+private float  _altitudeDamping       = DEFAULT_ALTITUDE_DAMPING;
+private float  _altitudeThreshold     = DEFAULT_ALTITUDE_THRESHOLD;
+private float  _altitudeMaxSpeed      = DEFAULT_ALTITUDE_MAX_SPEED;
+private float  _altitudePitchMax      = DEFAULT_ALTITUDE_PITCH_MAX;
+private float  _altitudePitchMinSpeed = DEFAULT_ALTITUDE_PITCH_MIN_SPEED;
+private float  _altitudePitchGain     = DEFAULT_ALTITUDE_PITCH_GAIN;
 
-private string _brakeGroup    = DEFAULT_BRAKE_GROUP;
-private int    _cockpitScreen = DEFAULT_COCKPIT_SCREEN;
+private string _brakeGroup       = DEFAULT_BRAKE_GROUP;
+private string _ascendUpGroup   = DEFAULT_ASCEND_UP_GROUP;
+private string _ascendDownGroup = DEFAULT_ASCEND_DOWN_GROUP;
+private int    _cockpitScreen   = DEFAULT_COCKPIT_SCREEN;
 
 // -------------------------------------------------------------------------
 // State
 // -------------------------------------------------------------------------
 
-private bool   _horizonActive  = false;
-private bool   _altitudeActive = false;
-private int    _bootPhase      = 0;
-private string _horizonStatus  = "---";
-private string _altitudeStatus = "---";
+private bool   _horizonActive      = false;
+private bool   _altitudeActive     = false;
+private bool   _ascendActive       = false;
+private int    _bootPhase          = 0;
+private float  _desiredPitchOffset = 0f;
+private string _horizonStatus      = "---";
+private string _altitudeStatus     = "---";
+private string _ascendStatus       = "---";
 
 // -------------------------------------------------------------------------
 // Blocks
@@ -88,7 +102,11 @@ private readonly List<IMyGyro>        _gyros          = new List<IMyGyro>();
 private readonly List<IMyThrust>      _thrusters      = new List<IMyThrust>();
 private readonly List<IMyThrust>      _upThrusters    = new List<IMyThrust>();
 private readonly List<IMyThrust>      _brakeThrusters = new List<IMyThrust>();
-private readonly List<IMyTextSurface> _surfaces       = new List<IMyTextSurface>();
+private readonly List<IMyTextSurface> _surfaces            = new List<IMyTextSurface>();
+private readonly List<string>         _ascendIssues        = new List<string>();
+private readonly List<IMyThrust>      _ascendUpThrusters   = new List<IMyThrust>();
+private readonly List<IMyThrust>      _ascendDownThrusters = new List<IMyThrust>();
+private readonly List<IMyGasTank>     _hydroTanks          = new List<IMyGasTank>();
 
 // -------------------------------------------------------------------------
 // Lifecycle
@@ -111,6 +129,7 @@ public void Main(string argument, UpdateType updateSource)
             InitBlocks();
             _horizonActive  = false;
             _altitudeActive = false;
+            _ascendActive   = false;
             _bootPhase      = 1;
             Runtime.UpdateFrequency = UpdateFrequency.Update10;
             DrawBoot(0);
@@ -124,11 +143,19 @@ public void Main(string argument, UpdateType updateSource)
             ReleaseThrusters();
             foreach (var t in _brakeThrusters) t.Enabled = true;
             _brakeThrusters.Clear();
+            _desiredPitchOffset = 0f;
+            if (_ascendActive)
+            {
+                foreach (var t in _ascendUpThrusters)   { t.ThrustOverridePercentage = 0f; t.Enabled = true; }
+                foreach (var t in _ascendDownThrusters)   t.Enabled = true;
+                _ascendActive = false;
+            }
             Runtime.UpdateFrequency = UpdateFrequency.None;
             DrawOffline();
             return;
 
         case "HORIZON_ON":
+            if (BlockedByGroupMode("HORIZON_ON")) return;
             ParseConfig();
             InitBlocks();
             _horizonActive = true;
@@ -137,6 +164,7 @@ public void Main(string argument, UpdateType updateSource)
             return;
 
         case "HORIZON_OFF":
+            if (BlockedByGroupMode("HORIZON_OFF")) return;
             _horizonActive = false;
             ReleaseGyros();
             ApplyUpdateFrequency();
@@ -144,6 +172,7 @@ public void Main(string argument, UpdateType updateSource)
             return;
 
         case "ALTITUDE_ON":
+            if (BlockedByGroupMode("ALTITUDE_ON")) return;
             ParseConfig();
             InitBlocks();
             _altitudeActive = true;
@@ -152,7 +181,9 @@ public void Main(string argument, UpdateType updateSource)
             return;
 
         case "ALTITUDE_OFF":
-            _altitudeActive = false;
+            if (BlockedByGroupMode("ALTITUDE_OFF")) return;
+            _altitudeActive     = false;
+            _desiredPitchOffset = 0f;
             ReleaseThrusters();
             ApplyUpdateFrequency();
             DrawStatus();
@@ -164,6 +195,7 @@ public void Main(string argument, UpdateType updateSource)
             return;
 
         case "CRUISE_ON":
+            if (_ascendActive) { Echo("CRUISE_ON blocked: ascend mode active"); DrawStatus(); return; }
             ParseConfig();
             InitBlocks();
             FindBrakeThrusters();
@@ -175,14 +207,33 @@ public void Main(string argument, UpdateType updateSource)
             return;
 
         case "CRUISE_OFF":
-            _horizonActive  = false;
-            _altitudeActive = false;
+            if (_ascendActive) { Echo("CRUISE_OFF blocked: ascend mode active"); DrawStatus(); return; }
+            _horizonActive      = false;
+            _altitudeActive     = false;
+            _desiredPitchOffset = 0f;
             ReleaseGyros();
             ReleaseThrusters();
             foreach (var t in _brakeThrusters) t.Enabled = true;
             _brakeThrusters.Clear();
             ApplyUpdateFrequency();
             DrawStatus();
+            return;
+
+        case "ASCEND_ON":
+        {
+            if (_brakeThrusters.Count > 0) { Echo("ASCEND_ON blocked: cruise mode active"); DrawStatus(); return; }
+            ParseConfig();
+            InitBlocks();
+            if (!CheckAscendRequirements()) { DrawAscendUnavailable(); return; }
+            InitAscend();
+            _ascendActive = true;
+            ApplyUpdateFrequency();
+            DrawStatus();
+            return;
+        }
+
+        case "ASCEND_OFF":
+            CompleteAscend();
             return;
     }
 
@@ -200,9 +251,10 @@ public void Main(string argument, UpdateType updateSource)
         return;
     }
 
-    // Feature ticks
-    if (_horizonActive)  HorizonTick();
+    // Feature ticks — altitude runs first so pitch offset is set before horizon reads it
     if (_altitudeActive) AltitudeTick();
+    if (_horizonActive)  HorizonTick();
+    if (_ascendActive)   AscendTick();
     DrawStatus();
 }
 
@@ -217,7 +269,22 @@ private void HorizonTick()
     Vector3D gravity = _controller.GetNaturalGravity();
     if (gravity.LengthSquared() < 0.001) { _horizonStatus = "NO GRAVITY"; return; }
 
-    Vector3D desiredUp      = -Vector3D.Normalize(gravity);
+    Vector3D trueUp    = -Vector3D.Normalize(gravity);
+    Vector3D desiredUp = trueUp;
+
+    if (Math.Abs(_desiredPitchOffset) > 0.001f)
+    {
+        Vector3D forward  = _controller.WorldMatrix.Forward;
+        Vector3D horizFwd = forward - Vector3D.Dot(forward, trueUp) * trueUp;
+        if (horizFwd.LengthSquared() > 0.001)
+        {
+            horizFwd  = Vector3D.Normalize(horizFwd);
+            double cosP = Math.Cos(_desiredPitchOffset);
+            double sinP = Math.Sin(_desiredPitchOffset);
+            desiredUp = trueUp * cosP + horizFwd * sinP;
+        }
+    }
+
     Vector3D currentUp      = _controller.WorldMatrix.Up;
     Vector3D tiltCorrection = Vector3D.Cross(currentUp, desiredUp);
     double   tiltError      = tiltCorrection.Length();
@@ -276,14 +343,34 @@ private void AltitudeTick()
     float mass          = _controller.CalculateShipMass().TotalMass;
     float hoverFraction = (mass * (float)gravity.Length()) / totalMaxThrust;
 
-    float pdCorrection = 0f;
-    if (Math.Abs(altitudeError) >= _altitudeThreshold || Math.Abs(verticalSpeed) >= 1.0)
-        pdCorrection = (float)(altitudeError * _altitudeCorrection - verticalSpeed * _altitudeDamping);
+    float pdCorrection      = 0f;
+    bool  usingPitchDescent = false;
+
+    if (altitudeError < -_altitudeThreshold && _horizonActive)
+    {
+        double speed = _controller.GetShipVelocities().LinearVelocity.Length();
+        if (speed >= _altitudePitchMinSpeed && _altitudePitchMax > 0.001f)
+        {
+            double maxPitchRad  = _altitudePitchMax * Math.PI / 180.0;
+            double pitchAngle   = Math.Min(-altitudeError * _altitudePitchGain, maxPitchRad);
+            _desiredPitchOffset = (float)pitchAngle;
+            usingPitchDescent   = true;
+        }
+    }
+
+    if (!usingPitchDescent)
+    {
+        _desiredPitchOffset = 0f;
+        if (Math.Abs(altitudeError) >= _altitudeThreshold || Math.Abs(verticalSpeed) >= 1.0)
+            pdCorrection = (float)(altitudeError * _altitudeCorrection - verticalSpeed * _altitudeDamping);
+    }
 
     // 0.001 keeps override active so dampeners cannot steal upward thrusters during descent.
     // Setting 0f releases the override back to the game, which is the bug that causes
     // slow/no descent and upward drift.
-    float thrustFraction = Math.Max(0.001f, Math.Min(1f, hoverFraction + pdCorrection));
+    float thrustFraction = usingPitchDescent
+        ? Math.Max(0.001f, hoverFraction)
+        : Math.Max(0.001f, Math.Min(1f, hoverFraction + pdCorrection));
 
     // Speed limiter: applied after PD so it acts as a hard cap regardless of altitude error.
     // Braking gain scales with excess speed relative to the configured limit.
@@ -310,6 +397,8 @@ private void AltitudeTick()
         _altitudeStatus = "HOLD " + cur + "m";
     else if (altitudeError > 0)
         _altitudeStatus = "CLIMB " + cur + "/" + tgt + "m";
+    else if (usingPitchDescent)
+        _altitudeStatus = "GLIDE " + cur + "/" + tgt + "m";
     else
         _altitudeStatus = "DESCEND " + cur + "/" + tgt + "m";
 }
@@ -473,13 +562,65 @@ private void DrawOffline()
 // Display — status screen
 // -------------------------------------------------------------------------
 
+private void DrawAscendStatus()
+{
+    foreach (var s in _surfaces)
+    {
+        var vp  = VP(s);
+        var pan = Inset(vp, 10f);
+        float cx = vp.X + vp.Width * 0.5f;
+
+        double altitude = 0;
+        bool   hasAlt   = _controller.TryGetPlanetElevation(MyPlanetElevation.Surface, out altitude);
+        double gravity  = _controller.GetNaturalGravity().Length();
+        double speed    = _controller.GetShipVelocities().LinearVelocity.Length();
+        bool   thrusting = _ascendUpThrusters.Count > 0 &&
+                           _ascendUpThrusters[0].ThrustOverridePercentage > 0.5f;
+
+        using (var fr = s.DrawFrame())
+        {
+            Fill(fr, vp, COL_BG);
+            Fill(fr, pan, COL_PANEL);
+            DrawBorder(fr, pan, COL_ACCENT, 3f);
+
+            Txt(fr, "PTA",    pan.X + 20f,    pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
+            Txt(fr, "ASCEND", pan.Right - 20f, pan.Y + 20f, COL_WARN,   0.44f, TextAlignment.RIGHT);
+
+            float dy = pan.Y + 52f;
+            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
+            dy += 14f;
+
+            StatusRow(fr, pan, dy, "ALT",
+                hasAlt ? altitude.ToString("F0") + "m" : "---",
+                COL_TEXT);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy, "GRAVITY",
+                gravity.ToString("F2") + " m/s2",
+                COL_TEXT);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            string speedStr = speed.ToString("F0") + "m/s  " + (thrusting ? "THRUST" : "COAST");
+            StatusRow(fr, pan, dy, "SPEED", speedStr, thrusting ? COL_OK : COL_WARN);
+
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
+                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
+        }
+    }
+}
+
 private void DrawStatus()
 {
     if (_controller == null) { DrawOffline(); return; }
+    if (_ascendActive)       { DrawAscendStatus(); return; }
 
     bool correcting =
         (_horizonActive  && _horizonStatus.StartsWith("CORRECTING")) ||
-        (_altitudeActive && (_altitudeStatus.StartsWith("CLIMB") || _altitudeStatus.StartsWith("DESCEND")));
+        (_altitudeActive && (_altitudeStatus.StartsWith("CLIMB") || _altitudeStatus.StartsWith("DESCEND") || _altitudeStatus.StartsWith("GLIDE")));
     bool anyActive = _horizonActive || _altitudeActive || _brakeThrusters.Count > 0;
 
     Color borderCol = correcting ? COL_WARN : anyActive ? COL_ACCENT : COL_DIM;
@@ -528,6 +669,14 @@ private void DrawStatus()
                 "CRUISE",
                 _brakeThrusters.Count > 0 ? _brakeThrusters.Count + " BRAKES OFF" : "OFF",
                 _brakeThrusters.Count > 0 ? COL_OK : COL_DIM);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy,
+                "ASCEND",
+                _ascendActive ? _ascendStatus : "OFF",
+                _ascendActive ? COL_OK : COL_DIM);
 
             // Footer
             Txt(fr, "Planetary Travel Assistant  v" + VERSION,
@@ -536,10 +685,161 @@ private void DrawStatus()
     }
 }
 
+private bool BlockedByGroupMode(string cmd)
+{
+    if (_ascendActive)             { Echo(cmd + " blocked: ascend mode active");  DrawStatus(); return true; }
+    if (_brakeThrusters.Count > 0) { Echo(cmd + " blocked: cruise mode active");  DrawStatus(); return true; }
+    return false;
+}
+
 private string GetModeLabel()
 {
+    if (_ascendActive)             return "ASCEND";
     if (_brakeThrusters.Count > 0) return "CRUISE";
     return "";
+}
+
+// -------------------------------------------------------------------------
+// Ascend — requirements check and unavailable screen
+// -------------------------------------------------------------------------
+
+private bool CheckAscendRequirements()
+{
+    _ascendIssues.Clear();
+
+    if (string.IsNullOrWhiteSpace(_ascendUpGroup))
+        _ascendIssues.Add("no up_group set");
+
+    if (string.IsNullOrWhiteSpace(_ascendDownGroup))
+        _ascendIssues.Add("no down_group set");
+
+    var hydroThrusters = new List<IMyThrust>();
+    GridTerminalSystem.GetBlocksOfType(hydroThrusters,
+        b => b.IsSameConstructAs(Me) && b.DefinitionDisplayNameText.Contains("Hydrogen"));
+    if (hydroThrusters.Count == 0)
+        _ascendIssues.Add("No Hydro Thrusters");
+
+    _hydroTanks.Clear();
+    GridTerminalSystem.GetBlocksOfType(_hydroTanks,
+        b => b.IsSameConstructAs(Me) && b.DefinitionDisplayNameText.Contains("Hydrogen"));
+    if (_hydroTanks.Count == 0)
+    {
+        _ascendIssues.Add("No Tanks");
+    }
+    else
+    {
+        bool hasFuel = false;
+        foreach (var tank in _hydroTanks)
+            if (tank.FilledRatio > 0.001) { hasFuel = true; break; }
+        if (!hasFuel)
+            _ascendIssues.Add("No gas in tanks");
+    }
+
+    return _ascendIssues.Count == 0;
+}
+
+private void DrawAscendUnavailable()
+{
+    foreach (var s in _surfaces)
+    {
+        var vp  = VP(s);
+        var pan = Inset(vp, 10f);
+        float cx = vp.X + vp.Width * 0.5f;
+
+        using (var fr = s.DrawFrame())
+        {
+            Fill(fr, vp, COL_BG);
+            Fill(fr, pan, COL_PANEL);
+            DrawBorder(fr, pan, COL_WARN, 3f);
+
+            Txt(fr, "PTA",    pan.X + 20f,    pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
+            Txt(fr, "ASCEND", pan.Right - 20f, pan.Y + 20f, COL_BAD,    0.44f, TextAlignment.RIGHT);
+
+            float dy = pan.Y + 52f;
+            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
+            dy += 22f;
+
+            Txt(fr, "ASCEND MODE UNAVAILABLE", cx, dy, COL_WARN, 0.44f, TextAlignment.CENTER);
+            dy += 28f;
+
+            float bx = pan.X + 40f;
+            foreach (var reason in _ascendIssues)
+            {
+                Txt(fr, "• " + reason, bx, dy, COL_DIM, 0.38f, TextAlignment.LEFT);
+                dy += 22f;
+            }
+
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
+                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Ascend — init, tick, complete
+// -------------------------------------------------------------------------
+
+private void InitAscend()
+{
+    // Tanks: ensure stockpile is off so hydrogen flows to thrusters freely
+    foreach (var tank in _hydroTanks)
+        tank.Stockpile = false;
+
+    // Populate thruster groups
+    _ascendUpThrusters.Clear();
+    _ascendDownThrusters.Clear();
+    IMyBlockGroup upGroup = GridTerminalSystem.GetBlockGroupWithName(_ascendUpGroup);
+    if (upGroup != null) upGroup.GetBlocksOfType(_ascendUpThrusters);
+    IMyBlockGroup downGroup = GridTerminalSystem.GetBlockGroupWithName(_ascendDownGroup);
+    if (downGroup != null) downGroup.GetBlocksOfType(_ascendDownThrusters);
+
+    // Keep ship level during climb
+    _horizonActive = true;
+
+    // Disable down thrusters
+    foreach (var t in _ascendDownThrusters)
+        t.Enabled = false;
+
+    // Up thrusters: full override
+    foreach (var t in _ascendUpThrusters)
+    {
+        t.Enabled = true;
+        t.ThrustOverridePercentage = 1f;
+    }
+
+    _ascendStatus = "LAUNCH";
+}
+
+private void AscendTick()
+{
+    if (_controller == null) return;
+
+    // Completion: gravity near zero means we've cleared the atmosphere
+    double gravity = _controller.GetNaturalGravity().Length();
+    if (gravity < 0.04)
+    {
+        CompleteAscend();
+        return;
+    }
+
+    // Bang-bang speed limiter at 95 m/s
+    double speed      = _controller.GetShipVelocities().LinearVelocity.Length();
+    float  thrustPct  = speed > 95.0 ? 0.001f : 1f;
+    foreach (var t in _ascendUpThrusters)
+        t.ThrustOverridePercentage = thrustPct;
+
+    string phase = thrustPct > 0.5f ? "THRUST" : "COAST";
+    _ascendStatus = phase + " " + speed.ToString("F0") + "m/s  g:" + gravity.ToString("F2");
+}
+
+private void CompleteAscend()
+{
+    foreach (var t in _ascendUpThrusters)   { t.ThrustOverridePercentage = 0f; t.Enabled = true; }
+    foreach (var t in _ascendDownThrusters)   t.Enabled = true;
+    _ascendActive = false;
+    _ascendStatus = "---";
+    ApplyUpdateFrequency();
+    DrawStatus();
 }
 
 private Color HorizonColor()
@@ -551,7 +851,7 @@ private Color HorizonColor()
 
 private Color AltitudeColor()
 {
-    if (_altitudeStatus.StartsWith("CLIMB") || _altitudeStatus.StartsWith("DESCEND")) return COL_WARN;
+    if (_altitudeStatus.StartsWith("CLIMB") || _altitudeStatus.StartsWith("DESCEND") || _altitudeStatus.StartsWith("GLIDE")) return COL_WARN;
     if (_altitudeStatus.StartsWith("HOLD"))                                            return COL_OK;
     return COL_DIM;
 }
@@ -578,10 +878,15 @@ private void ParseConfig()
     _altitudeCorrection = (float)ini.Get(SEC_ALTITUDE, "correction").ToDouble(DEFAULT_ALTITUDE_CORRECTION);
     _altitudeDamping    = (float)ini.Get(SEC_ALTITUDE, "damping").ToDouble(DEFAULT_ALTITUDE_DAMPING);
     _altitudeThreshold  = (float)ini.Get(SEC_ALTITUDE, "threshold").ToDouble(DEFAULT_ALTITUDE_THRESHOLD);
-    _altitudeMaxSpeed   = (float)ini.Get(SEC_ALTITUDE, "max_speed").ToDouble(DEFAULT_ALTITUDE_MAX_SPEED);
+    _altitudeMaxSpeed      = (float)ini.Get(SEC_ALTITUDE, "max_speed").ToDouble(DEFAULT_ALTITUDE_MAX_SPEED);
+    _altitudePitchMax      = (float)ini.Get(SEC_ALTITUDE, "pitch_max").ToDouble(DEFAULT_ALTITUDE_PITCH_MAX);
+    _altitudePitchMinSpeed = (float)ini.Get(SEC_ALTITUDE, "pitch_min_speed").ToDouble(DEFAULT_ALTITUDE_PITCH_MIN_SPEED);
+    _altitudePitchGain     = (float)ini.Get(SEC_ALTITUDE, "pitch_gain").ToDouble(DEFAULT_ALTITUDE_PITCH_GAIN);
 
-    _brakeGroup    = ini.Get(SEC_CRUISE,  "brake_group").ToString(DEFAULT_BRAKE_GROUP);
-    _cockpitScreen = ini.Get(SEC_DISPLAY, "cockpit_screen").ToInt32(DEFAULT_COCKPIT_SCREEN);
+    _brakeGroup       = ini.Get(SEC_CRUISE,  "brake_group").ToString(DEFAULT_BRAKE_GROUP);
+    _ascendUpGroup   = ini.Get(SEC_ASCEND,  "up_group").ToString(DEFAULT_ASCEND_UP_GROUP);
+    _ascendDownGroup = ini.Get(SEC_ASCEND,  "down_group").ToString(DEFAULT_ASCEND_DOWN_GROUP);
+    _cockpitScreen   = ini.Get(SEC_DISPLAY, "cockpit_screen").ToInt32(DEFAULT_COCKPIT_SCREEN);
 }
 
 private void WriteDefaultConfig()
@@ -594,8 +899,13 @@ private void WriteDefaultConfig()
     ini.Set(SEC_ALTITUDE, "correction",     DEFAULT_ALTITUDE_CORRECTION);
     ini.Set(SEC_ALTITUDE, "damping",        DEFAULT_ALTITUDE_DAMPING);
     ini.Set(SEC_ALTITUDE, "threshold",      DEFAULT_ALTITUDE_THRESHOLD);
-    ini.Set(SEC_ALTITUDE, "max_speed",      DEFAULT_ALTITUDE_MAX_SPEED);
+    ini.Set(SEC_ALTITUDE, "max_speed",       DEFAULT_ALTITUDE_MAX_SPEED);
+    ini.Set(SEC_ALTITUDE, "pitch_max",       DEFAULT_ALTITUDE_PITCH_MAX);
+    ini.Set(SEC_ALTITUDE, "pitch_min_speed", DEFAULT_ALTITUDE_PITCH_MIN_SPEED);
+    ini.Set(SEC_ALTITUDE, "pitch_gain",      DEFAULT_ALTITUDE_PITCH_GAIN);
     ini.Set(SEC_CRUISE,   "brake_group",    DEFAULT_BRAKE_GROUP);
+    ini.Set(SEC_ASCEND,   "up_group",       DEFAULT_ASCEND_UP_GROUP);
+    ini.Set(SEC_ASCEND,   "down_group",     DEFAULT_ASCEND_DOWN_GROUP);
     ini.Set(SEC_DISPLAY,  "cockpit_screen", DEFAULT_COCKPIT_SCREEN);
     Me.CustomData = ini.ToString();
 }
@@ -713,7 +1023,7 @@ private void FindUpThrusters(Vector3D gravity)
 
 private void ApplyUpdateFrequency()
 {
-    if (_altitudeActive)
+    if (_altitudeActive || _ascendActive)
         Runtime.UpdateFrequency = UpdateFrequency.Update10;
     else if (_horizonActive)
         Runtime.UpdateFrequency = UpdateFrequency.Update100;
