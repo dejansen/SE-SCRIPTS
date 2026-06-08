@@ -33,7 +33,7 @@ private const string DEFAULT_BRAKE_GROUP   = "";
 private const int    DEFAULT_COCKPIT_SCREEN = 0;
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.1";
+private const string VERSION   = "1.2";
 
 // -------------------------------------------------------------------------
 // Display colors  (same palette as AGM for consistency)
@@ -498,16 +498,12 @@ private void DrawStatus()
 
             // Header
             Txt(fr, "PTA", pan.X + 20f, pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
-            if (pan.Width >= 350f)
-                Txt(fr, "Planetary Travel Assistant", pan.Right - 20f, pan.Y + 20f, COL_DIM, 0.34f, TextAlignment.RIGHT);
-
-            // Mode sub-header
             string modeLabel = GetModeLabel();
             if (modeLabel.Length > 0)
-                Txt(fr, modeLabel, pan.X + 20f, pan.Y + 42f, COL_WARN, 0.44f, TextAlignment.LEFT);
+                Txt(fr, modeLabel, pan.Right - 20f, pan.Y + 20f, COL_WARN, 0.44f, TextAlignment.RIGHT);
 
             // Divider
-            float dy = pan.Y + 58f;
+            float dy = pan.Y + 52f;
             Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
             dy += 14f;
 

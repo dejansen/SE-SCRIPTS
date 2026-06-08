@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant `v1.1`
+# PTA — Planetary Travel Assistant `v1.2`
 
 Autopilot assistant for planetary flight. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
