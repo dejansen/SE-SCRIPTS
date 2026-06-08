@@ -6,6 +6,7 @@
 //   HORIZON_ON / HORIZON_OFF   — keep ship level with horizon
 //   ALTITUDE_ON / ALTITUDE_OFF — hold terrain-relative cruise altitude
 //   SET_ALTITUDE               — lock current terrain altitude as target
+//   SET_ALTITUDE <meters>      — set a specific altitude target (e.g. SET_ALTITUDE 2000)
 //   CRUISE_ON / CRUISE_OFF     — disable brake thrusters, enable both features
 //   ASCEND_ON / ASCEND_OFF     — climb to space at constant speed
 //   DESCEND_ON / DESCEND_OFF   — descend to 3000m, keeping level
@@ -41,7 +42,7 @@ private const string DEFAULT_ASCEND_DOWN_GROUP = "";
 private const int    DEFAULT_COCKPIT_SCREEN     = 0;
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.4";
+private const string VERSION   = "1.5";
 
 // -------------------------------------------------------------------------
 // Display colors  (same palette as AGM for consistency)
@@ -86,16 +87,21 @@ private int    _cockpitScreen   = DEFAULT_COCKPIT_SCREEN;
 // State
 // -------------------------------------------------------------------------
 
-private bool   _horizonActive      = false;
-private bool   _altitudeActive     = false;
-private bool   _ascendActive       = false;
-private bool   _descendActive      = false;
-private int    _bootPhase          = 0;
-private float  _desiredPitchOffset = 0f;
-private string _horizonStatus      = "---";
-private string _altitudeStatus     = "---";
-private string _ascendStatus       = "---";
-private string _descendStatus      = "---";
+private bool   _horizonActive        = false;
+private bool   _altitudeActive       = false;
+private bool   _ascendActive         = false;
+private bool   _descendActive        = false;
+private int    _bootPhase            = 0;
+private float  _desiredPitchOffset   = 0f;
+private string _horizonStatus        = "---";
+private string _altitudeStatus       = "---";
+private string _ascendStatus         = "---";
+private string _descendStatus        = "---";
+private bool   _flashActive   = false;
+private string _flashTitle    = "";
+private string _flashSubtitle = "";
+private Color  _flashColor    = new Color(97, 255, 214);
+private int    _flashTicks    = 0;
 
 // -------------------------------------------------------------------------
 // Blocks
@@ -128,6 +134,20 @@ public Program()
 
 public void Main(string argument, UpdateType updateSource)
 {
+    if (argument == "SET_ALTITUDE" || argument.StartsWith("SET_ALTITUDE "))
+    {
+        string suffix = argument.Length > "SET_ALTITUDE".Length
+            ? argument.Substring("SET_ALTITUDE".Length).Trim()
+            : "";
+        float parsed;
+        if (suffix.Length > 0 && float.TryParse(suffix, out parsed))
+            SetAltitudeTo(parsed);
+        else
+            SetAltitudeFromCurrentPosition();
+        DrawStatus();
+        return;
+    }
+
     switch (argument)
     {
         case "PTA_ON":
@@ -205,11 +225,6 @@ public void Main(string argument, UpdateType updateSource)
             DrawStatus();
             return;
 
-        case "SET_ALTITUDE":
-            SetAltitudeFromCurrentPosition();
-            DrawStatus();
-            return;
-
         case "CRUISE_ON":
         {
             if (_ascendActive) { Echo("CRUISE_ON blocked: ascend mode active"); DrawStatus(); return; }
@@ -254,7 +269,7 @@ public void Main(string argument, UpdateType updateSource)
         }
 
         case "ASCEND_OFF":
-            CompleteAscend();
+            CompleteAscend(manual: true);
             return;
 
         case "DESCEND_ON":
@@ -272,7 +287,7 @@ public void Main(string argument, UpdateType updateSource)
         }
 
         case "DESCEND_OFF":
-            CompleteDescend();
+            CompleteDescend(manual: true);
             return;
     }
 
@@ -288,6 +303,12 @@ public void Main(string argument, UpdateType updateSource)
             DrawStatus();
         }
         return;
+    }
+
+    // Dismiss flash message after N ticks when features are running
+    if (_flashActive && _flashTicks > 0)
+    {
+        if (--_flashTicks == 0) _flashActive = false;
     }
 
     // Feature ticks — altitude runs first so pitch offset is set before horizon reads it
@@ -458,7 +479,22 @@ private void SetAltitudeFromCurrentPosition()
         return;
     }
 
-    _altitudeTarget = (float)currentAltitude;
+    SetAltitudeTo((float)currentAltitude);
+}
+
+private void ShowFlash(string title, string subtitle, Color color, int ticks = 5)
+{
+    _flashActive   = true;
+    _flashTitle    = title;
+    _flashSubtitle = subtitle;
+    _flashColor    = color;
+    _flashTicks    = ticks;
+}
+
+private void SetAltitudeTo(float target)
+{
+    _altitudeTarget = target;
+    ShowFlash("TARGET ALTITUDE SET", target.ToString("F0") + " m", COL_OK);
     var ini = new MyIni();
     ini.TryParse(Me.CustomData);
     ini.Set(SEC_ALTITUDE, "target", _altitudeTarget);
@@ -702,11 +738,43 @@ private void DrawDescendStatus()
     }
 }
 
+private void DrawFlash()
+{
+    foreach (var s in _surfaces)
+    {
+        var vp  = VP(s);
+        var pan = Inset(vp, 10f);
+        float cx = vp.X + vp.Width * 0.5f;
+
+        using (var fr = s.DrawFrame())
+        {
+            Fill(fr, vp, COL_BG);
+            Fill(fr, pan, COL_PANEL);
+            DrawBorder(fr, pan, _flashColor, 3f);
+
+            Txt(fr, "PTA", pan.X + 20f, pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
+
+            float dy = pan.Y + 52f;
+            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
+            dy += 28f;
+
+            Txt(fr, _flashTitle, cx, dy, COL_TEXT, 0.40f, TextAlignment.CENTER);
+            dy += 50f;
+
+            Txt(fr, _flashSubtitle, cx, dy, _flashColor, 1.0f, TextAlignment.CENTER);
+
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
+                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
+        }
+    }
+}
+
 private void DrawStatus()
 {
     if (_controller == null) { DrawOffline(); return; }
     if (_ascendActive)       { DrawAscendStatus(); return; }
     if (_descendActive)      { DrawDescendStatus(); return; }
+    if (_flashActive)        { DrawFlash(); return; }
 
     bool correcting =
         (_horizonActive  && _horizonStatus.StartsWith("CORRECTING")) ||
@@ -924,12 +992,14 @@ private void AscendTick()
     _ascendStatus = phase + " " + speed.ToString("F0") + "m/s  g:" + gravity.ToString("F2");
 }
 
-private void CompleteAscend()
+private void CompleteAscend(bool manual = false)
 {
     foreach (var t in _ascendUpThrusters)   { t.ThrustOverridePercentage = 0f; t.Enabled = true; }
     foreach (var t in _ascendDownThrusters)   t.Enabled = true;
     _ascendActive = false;
     _ascendStatus = "---";
+    if (manual) ShowFlash("ASCEND ABORTED",   "",               COL_WARN, 8);
+    else        ShowFlash("ASCEND COMPLETE",   "ORBIT REACHED",  COL_OK,   8);
     ApplyUpdateFrequency();
     DrawStatus();
 }
@@ -1061,7 +1131,7 @@ private void DescendTick()
     _descendStatus = "FALLING " + altitude.ToString("F0") + "m  " + speed.ToString("F0") + "m/s";
 }
 
-private void CompleteDescend()
+private void CompleteDescend(bool manual = false)
 {
     foreach (var t in _descendUpThrusters)
         t.ThrustOverridePercentage = 0f;
@@ -1070,6 +1140,8 @@ private void CompleteDescend()
     ReleaseGyros();
     _descendActive = false;
     _descendStatus = "---";
+    if (manual) ShowFlash("DESCEND ABORTED",   "",                       COL_WARN, 8);
+    else        ShowFlash("DESCEND COMPLETE",   "3000 m — MANUAL CONTROL", COL_OK,   8);
     ApplyUpdateFrequency();
     DrawStatus();
 }

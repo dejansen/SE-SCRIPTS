@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant `v1.4`
+# PTA — Planetary Travel Assistant `v1.5`
 
 Autopilot assistant for planetary flight and orbit transitions. Features can be enabled independently via hotbar commands. The system shows live status on any tagged LCD, cockpit screen, or the PB's own screen.
 
@@ -11,7 +11,7 @@ Autopilot assistant for planetary flight and orbit transitions. Features can be 
 - **Cruise mode** — convenience command that disables brake thrusters (so the ship coasts freely) and enables horizon and altitude hold in one press. Works in space too — in zero gravity only the brake thrusters are toggled.
 - **Ascend mode** — full-thrust climb to orbit using configured hydrogen thruster groups. Keeps ship level during climb; auto-completes when gravity drops near zero.
 - **Descend mode** — gravity-powered descent from orbit or high altitude. Disables up thrusters so the ship falls freely; keeps ship level via horizon hold. Auto-completes at 3000 m.
-- **Display** — animated boot screen on startup, live status panel with colour-coded state, shown on any tagged LCD or cockpit screen.
+- **Display** — animated boot screen on startup, live status panel with colour-coded state, shown on any tagged LCD or cockpit screen. Flash messages confirm altitude changes and mode completions or aborts.
 
 ---
 
@@ -71,6 +71,11 @@ Reads the ship's current altitude above the terrain surface and saves it as the 
 
 Requires the ship to be near a planet with a detectable surface.
 
+### `SET_ALTITUDE <meters>`
+Sets the cruise altitude to a specific value without needing to physically fly there. Example: `SET_ALTITUDE 2000` locks the target at 2000 m.
+
+Both forms show a confirmation screen on the display immediately after the target is saved.
+
 ---
 
 ### `CRUISE_ON`
@@ -108,7 +113,7 @@ Auto-completes when gravity drops below 0.04 m/s² (edge of atmosphere). Re-enab
 ---
 
 ### `ASCEND_OFF`
-Manually ends ascent mode early. Re-enables all thruster groups and releases gyro control.
+Manually ends ascent mode early. Re-enables all thruster groups and releases gyro control. Shows an **ASCEND ABORTED** message on the display (as opposed to the **ASCEND COMPLETE** shown on automatic completion).
 
 ---
 
@@ -127,7 +132,7 @@ Requires `up_group` to be set in Custom Data.
 ---
 
 ### `DESCEND_OFF`
-Manually ends descent mode early. Releases up thruster overrides and gyro control.
+Manually ends descent mode early. Releases up thruster overrides and gyro control. Shows a **DESCEND ABORTED** message on the display (as opposed to **DESCEND COMPLETE** shown on automatic completion at 3000 m).
 
 ---
 
@@ -167,7 +172,8 @@ Manually ends descent mode early. Releases up thruster overrides and gyro contro
 | 2 | `PTA_OFF` | PTA Off |
 | 3 | `CRUISE_ON` | Cruise On |
 | 4 | `CRUISE_OFF` | Cruise Off |
-| 5 | `SET_ALTITUDE` | Set Alt |
+| 5 | `SET_ALTITUDE` | Set Alt (current) |
+| 5 | `SET_ALTITUDE 2000` | Set Alt 2000m |
 | 6 | `ASCEND_ON` | Ascend On |
 | 7 | `ASCEND_OFF` | Ascend Off |
 | 8 | `DESCEND_ON` | Descend On |
