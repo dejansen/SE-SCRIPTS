@@ -1108,16 +1108,29 @@ ShieldComponent=2000";
 
         private void QueueToAllMasters(MyDefinitionId bp, double amount, bool isBasic)
         {
-            // Queue to every idle master assembler that can handle this blueprint
-            List<IMyAssembler> pool = isBasic&&_basicAssemblers.Count>0 ? _basicAssemblers : _advAssemblers.Count>0 ? _advAssemblers : _assemblers;
-            for (int i=0;i<pool.Count;i++)
+            // Prefer basic assemblers for basic comps, advanced for advanced
+            // Fall back to full _assemblers list if preferred pool has no eligible non-coop master
+            List<IMyAssembler> preferred = isBasic&&_basicAssemblers.Count>0 ? _basicAssemblers : _advAssemblers.Count>0 ? _advAssemblers : _assemblers;
+            bool queued=false;
+            for (int i=0;i<preferred.Count;i++)
             {
-                var a=pool[i];
+                var a=preferred[i];
                 if (a.CooperativeMode) continue;
                 if (a.CustomName.IndexOf("!disassemble-only",SC)>=0) continue;
                 if (!a.CanUseBlueprint(bp)) continue;
-                if (!a.IsProducing&&a.IsQueueEmpty)
+                a.AddQueueItem(bp,(MyFixedPoint)amount);
+                queued=true;
+            }
+            if (!queued)
+            {
+                for (int i=0;i<_assemblers.Count;i++)
+                {
+                    var a=_assemblers[i];
+                    if (a.CooperativeMode) continue;
+                    if (a.CustomName.IndexOf("!disassemble-only",SC)>=0) continue;
+                    if (!a.CanUseBlueprint(bp)) continue;
                     a.AddQueueItem(bp,(MyFixedPoint)amount);
+                }
             }
         }
 
@@ -1294,17 +1307,52 @@ ShieldComponent=2000";
         {
             var prov=block as IMyTextSurfaceProvider; if (prov==null||prov.SurfaceCount<=0) return;
             var surf=prov.GetSurface(0); string d=block.CustomData??"";
-            if      (d.IndexOf("AlertDashboard",SC)>=0||d.IndexOf("WarningDashboard",SC)>=0||d.IndexOf("AGM-Alerts",SC)>=0) DrawAlertDash(surf);
-            else if (d.IndexOf("ReactorRefuel",SC)>=0||d.IndexOf("AGM-Reactor",SC)>=0) DrawPowerDash(surf,2);
-            else if (d.IndexOf("BatteryControl",SC)>=0||d.IndexOf("AGM-Battery",SC)>=0) DrawPowerDash(surf,3);
-            else if (d.IndexOf("PowerDashboard",SC)>=0||d.IndexOf("AGM-Power",SC)>=0) DrawPowerDash(surf,DashPage(block,"PowerDashboard"));
-            else if (d.IndexOf("LogisticsDashboard",SC)>=0)  DrawLogisticsDash(surf);
-            else if (d.IndexOf("ProductionDetails",SC)>=0||d.IndexOf("AGM-Production2",SC)>=0) DrawProductionDash(surf,2);
-            else if (d.IndexOf("ProductionWarnings",SC)>=0||d.IndexOf("AGM-ProductionWarnings",SC)>=0) DrawProductionDash(surf,3);
-            else if (d.IndexOf("ProductionDashboard",SC)>=0) DrawProductionDash(surf,DashPage(block,"ProductionDashboard"));
-            else if (d.IndexOf("FuelLifeSupport",SC)>=0||d.IndexOf("LifeSupport",SC)>=0) DrawFuelDash(surf);
-            else if (d.IndexOf("Autocrafting",SC)>=0||d.IndexOf("AutoCrafting",SC)>=0) DrawAutocraftDash(surf,DashPage(block,"Autocrafting"));
-            else { string sk=StockKind(block); if (sk.Length>0) DrawStockDash(surf,sk,StockPage(block,sk)); else DrawCoreDash(surf); }
+            try
+            {
+                if      (d.IndexOf("AlertDashboard",SC)>=0||d.IndexOf("WarningDashboard",SC)>=0||d.IndexOf("AGM-Alerts",SC)>=0) DrawAlertDash(surf);
+                else if (d.IndexOf("ReactorRefuel",SC)>=0||d.IndexOf("AGM-Reactor",SC)>=0) DrawPowerDash(surf,2);
+                else if (d.IndexOf("BatteryControl",SC)>=0||d.IndexOf("AGM-Battery",SC)>=0) DrawPowerDash(surf,3);
+                else if (d.IndexOf("PowerDashboard",SC)>=0||d.IndexOf("AGM-Power",SC)>=0) DrawPowerDash(surf,DashPage(block,"PowerDashboard"));
+                else if (d.IndexOf("LogisticsDashboard",SC)>=0)  DrawLogisticsDash(surf);
+                else if (d.IndexOf("ProductionDetails",SC)>=0||d.IndexOf("AGM-Production2",SC)>=0) DrawProductionDash(surf,2);
+                else if (d.IndexOf("ProductionWarnings",SC)>=0||d.IndexOf("AGM-ProductionWarnings",SC)>=0) DrawProductionDash(surf,3);
+                else if (d.IndexOf("ProductionDashboard",SC)>=0) DrawProductionDash(surf,DashPage(block,"ProductionDashboard"));
+                else if (d.IndexOf("FuelLifeSupport",SC)>=0||d.IndexOf("LifeSupport",SC)>=0) DrawFuelDash(surf);
+                else if (d.IndexOf("Autocrafting",SC)>=0||d.IndexOf("AutoCrafting",SC)>=0) DrawAutocraftDash(surf,DashPage(block,"Autocrafting"));
+                else { string sk=StockKind(block); if (sk.Length>0) DrawStockDash(surf,sk,StockPage(block,sk)); else DrawCoreDash(surf); }
+            }
+            catch (Exception ex)
+            {
+                DrawErrorScreen(surf, ex.Message);
+            }
+        }
+
+        private void DrawErrorScreen(IMyTextSurface s, string msg)
+        {
+            try
+            {
+                PrepSurf(s);
+                var vp=VP(s); var panel=Inset(vp,10f);
+                using (var fr=s.DrawFrame())
+                {
+                    Fill(fr,vp,COL_BG); Fill(fr,panel,COL_PANEL);
+                    DrawBorder(fr,panel,COL_BAD,3f);
+                    float cx=panel.X+panel.Width*0.5f;
+                    Txt(fr,"AGM ERROR",cx,panel.Y+20f,COL_BAD,0.70f,TextAlignment.CENTER);
+                    Fill(fr,new RectangleF(panel.X+10f,panel.Y+52f,panel.Width-20f,1f),COL_BAD);
+                    int maxChars=(int)(panel.Width/9f); if (maxChars<10) maxChars=10;
+                    float y=panel.Y+64f;
+                    while (msg.Length>0&&y<panel.Bottom-20f)
+                    {
+                        string line=msg.Length<=maxChars?msg:msg.Substring(0,maxChars);
+                        Txt(fr,line,panel.X+14f,y,COL_WARN,0.34f,TextAlignment.LEFT);
+                        msg=msg.Length<=maxChars?"":msg.Substring(maxChars);
+                        y+=18f;
+                    }
+                    Txt(fr,"AGM v"+VERSION,cx,panel.Bottom-16f,COL_DIM,0.28f,TextAlignment.CENTER);
+                }
+            }
+            catch { }
         }
 
         private void DrawPbScreen()
