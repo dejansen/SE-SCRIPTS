@@ -15,7 +15,7 @@ namespace Script
 {
     public sealed class Program : MyGridProgram
     {
-        private const string VERSION    = "1.3";
+        private const string VERSION    = "1.4";
         private const string SCREEN_TAG = "[AGM-S]";
         private const string LIGHT_TAG  = "[AGM-LIGHT]";
         private static readonly StringComparison SC = StringComparison.OrdinalIgnoreCase;
@@ -61,6 +61,9 @@ namespace Script
         // Alert corner LCDs — drawn every tick, state updated by RunWarningLights
         private class AlertLcdEntry { public IMyTextSurface Surface; public int State; public string Watch; }
         private readonly List<AlertLcdEntry> _alertLcds = new List<AlertLcdEntry>();
+        private int    _asmScroll  = 0;
+        private double _asmScrollT = 0.0;
+        private const double PROD_SCROLL_INTERVAL = 3.0;
         private readonly StringBuilder          _sb      = new StringBuilder();
 
         private int    _drawTick    = 0;
@@ -130,6 +133,9 @@ namespace Script
         private readonly List<IMyAssembler>        _assemblers        = new List<IMyAssembler>();
         private readonly List<IMyAssembler>        _basicAssemblers   = new List<IMyAssembler>();
         private readonly List<IMyAssembler>        _advAssemblers     = new List<IMyAssembler>();
+        private readonly List<IMyAssembler>        _craftAssemblers   = new List<IMyAssembler>();
+        private readonly List<IMyAssembler>        _disasmAssemblers  = new List<IMyAssembler>();
+        private readonly List<IMyAssembler>        _asmSorted         = new List<IMyAssembler>();
         private readonly List<IMyRefinery>         _refineries        = new List<IMyRefinery>();
         private readonly List<MyProductionItem>    _queue             = new List<MyProductionItem>();
         private readonly List<string>              _refineryPriority  = new List<string>();
@@ -137,7 +143,7 @@ namespace Script
         private readonly Dictionary<string,double> _compQuotas  = new Dictionary<string,double>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string,double> _compStock   = new Dictionary<string,double>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string,double> _compQueued  = new Dictionary<string,double>(StringComparer.OrdinalIgnoreCase);
-        private bool   _prodEnabled=true,_monitorOnly=true,_autocraftComps=true,_sortAsmQueue=true,_sortRefInput=true;
+        private bool   _prodEnabled=true,_monitorOnly=true,_autocraftComps=true,_autoDisassemble=false,_sortAsmQueue=true,_sortRefInput=true;
         private bool   _prodV2=true,_prodShowDetails=true,_prodShowMissing=true,_prodShowBlockedAsm=true,_prodShowBlockedRef=true;
         private string _prodAssemblers="",_prodRefineries="";
         private double _prodWarnBelow=0.90;
@@ -514,6 +520,7 @@ ShieldComponent=2000";
                 {
                     if      (key.Equals("monitor_only",SC))             _monitorOnly=ParseBool(value,true);
                     else if (key.Equals("autocraft_components",SC))     _autocraftComps=ParseBool(value,true);
+                    else if (key.Equals("auto_disassemble",SC))         _autoDisassemble=ParseBool(value,false);
                     else if (key.Equals("sort_assembler_queue",SC))     _sortAsmQueue=ParseBool(value,true);
                     else if (key.Equals("sort_refinery_input",SC))      _sortRefInput=ParseBool(value,true);
                     else if (key.Equals("max_queue_per_run",SC))        int.TryParse(value,out _maxQueuePerRun);
@@ -1015,14 +1022,17 @@ ShieldComponent=2000";
 
         private void BuildProductionLists()
         {
-            _assemblers.Clear(); _basicAssemblers.Clear(); _advAssemblers.Clear(); _refineries.Clear();
+            _assemblers.Clear(); _basicAssemblers.Clear(); _advAssemblers.Clear(); _craftAssemblers.Clear(); _disasmAssemblers.Clear(); _asmSorted.Clear(); _refineries.Clear();
             for (int i=0; i<_blocks.Count; i++)
             {
                 var b=_blocks[i]; if (b==null||IsNoSort(b)||HasToken(b.CustomName,_hiddenTag)) continue;
                 var asm=b as IMyAssembler; if (asm!=null&&asm.IsFunctional&&!HasToken(asm.CustomName,_manualTag)&&MatchSpec(asm,_prodAssemblers,true))
                 { _assemblers.Add(asm);
-                  if (asm.BlockDefinition.SubtypeId.IndexOf("Basic",SC)>=0) _basicAssemblers.Add(asm);
-                  else _advAssemblers.Add(asm);
+                  bool _isBasicAsm=asm.BlockDefinition.SubtypeId.IndexOf("Basic",SC)>=0;
+                  if (_isBasicAsm) _basicAssemblers.Add(asm); else _advAssemblers.Add(asm);
+                  string _acd=asm.CustomData??""; bool _hasAgm=_acd.IndexOf("[AGM]",SC)>=0;
+                  if (!_hasAgm||GetAGMBool(_acd,"autocraft",true)) _craftAssemblers.Add(asm);
+                  if (_hasAgm&&GetAGMBool(_acd,"disassemble",false)) _disasmAssemblers.Add(asm);
                   continue; }
                 var ref2=b as IMyRefinery; if (ref2!=null&&ref2.IsFunctional&&!HasToken(ref2.CustomName,_manualTag)&&MatchSpec(ref2,_prodRefineries,true)) _refineries.Add(ref2);
             }
@@ -1034,11 +1044,12 @@ ShieldComponent=2000";
             if (!_prodEnabled){_prodStatus="disabled";return;}
             if (_globalPause){_prodStatus="paused";return;}
             if (_assemblers.Count==0&&_refineries.Count==0){_prodStatus="no machines";return;}
-            UpdateCompStock(); UpdateQueuedComps();
+            BuildAsmSorted(); UpdateCompStock(); UpdateQueuedComps();
             if (_sortAsmQueue) _lastAsmMoves=SortAssemblerQueues();
             UpdateProdWarning();
             if (_monitorOnly){_prodStatus="monitoring";return;}
             if (_autocraftComps) _lastQueued=QueueCompQuotas();
+            if (_autoDisassemble) _lastQueued+=DisassembleExcess();
             _prodStatus=(_lastQueued+_lastAsmMoves>0)?"active":"idle";
             UpdateProdWarning();
         }
@@ -1079,6 +1090,37 @@ ShieldComponent=2000";
             return queued;
         }
 
+        private bool GetAGMBool(string d, string key, bool fb)
+        { int idx=d.IndexOf("[AGM]",SC); if(idx<0)return fb; int kp=d.IndexOf(key+"=",idx,SC); if(kp<0)return fb; int ep=d.IndexOf('\n',kp); string v=(ep<0?d.Substring(kp):d.Substring(kp,ep-kp)).Trim(); v=v.Substring(key.Length+1).Trim().ToLowerInvariant(); if(v=="true"||v=="yes"||v=="1")return true; if(v=="false"||v=="no"||v=="0")return false; return fb; }
+
+        private void BuildAsmSorted()
+        { _asmSorted.Clear(); var adv=new List<IMyAssembler>(_advAssemblers); var basic=new List<IMyAssembler>(_basicAssemblers); adv.Sort((a,b)=>a.CustomName.CompareTo(b.CustomName)); basic.Sort((a,b)=>a.CustomName.CompareTo(b.CustomName)); _asmSorted.AddRange(adv); _asmSorted.AddRange(basic); }
+
+        private int DisassembleExcess()
+        {
+            int queued=0;
+            foreach (var quota in _compQuotas)
+            {
+                if (queued>=_maxQueuePerRun) break;
+                double stock,alreadyQueued; _compStock.TryGetValue(quota.Key,out stock); _compQueued.TryGetValue(quota.Key,out alreadyQueued);
+                double excess=stock-quota.Value; if (excess<1) continue;
+                MyDefinitionId bp; if (!FindBpFor(quota.Key,out bp)) continue;
+                double amount=Math.Min(Math.Ceiling(excess),_maxQueueAmount);
+                QueueDisassemble(bp,amount);
+                queued++; _lastQueuedItem="Disasm "+amount.ToString("0")+" "+quota.Key;
+            }
+            return queued;
+        }
+
+        private void QueueDisassemble(MyDefinitionId bp, double amount)
+        {
+            List<IMyAssembler> pool=_disasmAssemblers.Count>0?_disasmAssemblers:_assemblers;
+            for (int i=0;i<pool.Count;i++)
+            { var a=pool[i]; if (a.CooperativeMode) continue; if (a.CustomName.IndexOf("!assemble-only",SC)>=0) continue; if (!a.CanUseBlueprint(bp)) continue;
+              if (a.Mode!=MyAssemblerMode.Disassembly){if(a.IsProducing)continue;a.Mode=MyAssemblerMode.Disassembly;}
+              a.AddQueueItem(bp,(MyFixedPoint)amount); return; }
+        }
+
         private void UpdateProdWarning()
         {
             if (_prodWarning.Length>0) return;
@@ -1108,30 +1150,13 @@ ShieldComponent=2000";
 
         private void QueueToAllMasters(MyDefinitionId bp, double amount, bool isBasic)
         {
-            // Prefer basic assemblers for basic comps, advanced for advanced
-            // Fall back to full _assemblers list if preferred pool has no eligible non-coop master
-            List<IMyAssembler> preferred = isBasic&&_basicAssemblers.Count>0 ? _basicAssemblers : _advAssemblers.Count>0 ? _advAssemblers : _assemblers;
+            List<IMyAssembler> craftPool=_craftAssemblers.Count>0?_craftAssemblers:_assemblers;
+            List<IMyAssembler> preferred=isBasic&&_basicAssemblers.Count>0?_basicAssemblers:_advAssemblers.Count>0?_advAssemblers:craftPool;
             bool queued=false;
             for (int i=0;i<preferred.Count;i++)
-            {
-                var a=preferred[i];
-                if (a.CooperativeMode) continue;
-                if (a.CustomName.IndexOf("!disassemble-only",SC)>=0) continue;
-                if (!a.CanUseBlueprint(bp)) continue;
-                a.AddQueueItem(bp,(MyFixedPoint)amount);
-                queued=true;
-            }
+            { var a=preferred[i]; if (a.CooperativeMode) continue; if (a.CustomName.IndexOf("!disassemble-only",SC)>=0) continue; if (!a.CanUseBlueprint(bp)) continue; a.AddQueueItem(bp,(MyFixedPoint)amount); queued=true; }
             if (!queued)
-            {
-                for (int i=0;i<_assemblers.Count;i++)
-                {
-                    var a=_assemblers[i];
-                    if (a.CooperativeMode) continue;
-                    if (a.CustomName.IndexOf("!disassemble-only",SC)>=0) continue;
-                    if (!a.CanUseBlueprint(bp)) continue;
-                    a.AddQueueItem(bp,(MyFixedPoint)amount);
-                }
-            }
+            { for (int i=0;i<craftPool.Count;i++) { var a=craftPool[i]; if (a.CooperativeMode) continue; if (a.CustomName.IndexOf("!disassemble-only",SC)>=0) continue; if (!a.CanUseBlueprint(bp)) continue; a.AddQueueItem(bp,(MyFixedPoint)amount); } }
         }
 
         private IMyAssembler FindAsmFor(string item, out MyDefinitionId bp)
@@ -1590,13 +1615,22 @@ ShieldComponent=2000";
                 if (page==2&&_prodV2&&_prodShowDetails)
                 {
                     int rows=Math.Max(1,(int)((panel.Bottom-y-34f)/32f)),used=0;
-                    for(int i=0;i<_assemblers.Count&&used<rows;i++,used++,y+=32f){var _a=_assemblers[i];string _aj=AsmJob(_a);Color _ac=_a.IsProducing?COL_OK:_a.CooperativeMode?COL_DIM:COL_WARN;Row(fr,panel,y,Trim(MachineName(_a.CustomName),20)+(_a.CooperativeMode?"":" [M]"),_aj,_ac);}
+                    _asmScrollT+=Runtime.TimeSinceLastRun.TotalSeconds;
+                    if (_asmScrollT>=PROD_SCROLL_INTERVAL&&_asmSorted.Count>rows){_asmScrollT=0;_asmScroll=(_asmScroll+1)%Math.Max(1,_asmSorted.Count);}
+                    if (_asmScroll>=_asmSorted.Count) _asmScroll=0;
+                    for(int i=0;i<rows&&i<_asmSorted.Count;i++,used++,y+=32f){
+                        int idx=(_asmScroll+i)%_asmSorted.Count; var _a=_asmSorted[idx];
+                        bool _ac2=_craftAssemblers.Contains(_a); bool _ad=_disasmAssemblers.Contains(_a);
+                        string _lbl=Trim(MachineName(_a.CustomName),16)+(_a.CooperativeMode?"":" [M]")+(_ac2&&_ad?" C+D":_ad?" [D]":"");
+                        string _aj=AsmJob(_a); Color _clr=_a.IsProducing?COL_OK:_a.CooperativeMode?COL_DIM:COL_WARN;
+                        Row(fr,panel,y,_lbl,_aj,_clr);}
                     if(used==0) Row(fr,panel,y,"Status","NO ASSEMBLERS",COL_DIM);
                 }
                 else if (page==3&&_prodV2)
                 {
                     int rows=Math.Max(1,(int)((panel.Bottom-y-34f)/32f)),used=0;
-                    for(int i=0;i<_refineries.Count&&used<rows;i++,used++,y+=32f) Row(fr,panel,y,Trim(MachineName(_refineries[i].CustomName),24),RefOre(_refineries[i]),_refineries[i].IsProducing?COL_OK:COL_DIM);
+                    var _refSorted=new List<IMyRefinery>(_refineries); _refSorted.Sort((a,b)=>a.CustomName.CompareTo(b.CustomName));
+                    for(int i=0;i<_refSorted.Count&&used<rows;i++,used++,y+=32f) Row(fr,panel,y,Trim(MachineName(_refSorted[i].CustomName),24),RefOre(_refSorted[i]),_refSorted[i].IsProducing?COL_OK:COL_DIM);
                     if(used==0) Row(fr,panel,y,"Status","NO REFINERIES",COL_DIM);
                 }
                 else
@@ -1607,7 +1641,9 @@ ShieldComponent=2000";
                     Row(fr,panel,y,"Queued",ProdAsmQueued()+" machines",COL_TEXT);y+=32f;
                     Row(fr,panel,y,"Refineries",ProdRefProducing()+"/"+_refineries.Count,COL_ACCENT2);y+=32f;
                     Row(fr,panel,y,"Ref input",ProdRefInputFill().ToString("0.0")+"%",COL_TEXT);y+=32f;
-                    Row(fr,panel,y,"Autocraft",_lastQueued+" queued",COL_TEXT);
+                    Row(fr,panel,y,"Autocrafting",_autocraftComps?"Online":"Offline",_autocraftComps?COL_OK:COL_DIM);y+=32f;
+                    Row(fr,panel,y,"Disassembly",_autoDisassemble?"Online":"Offline",_autoDisassemble?COL_OK:COL_DIM);y+=32f;
+                    Row(fr,panel,y,"Last queued",_lastQueuedItem.Length>0?_lastQueuedItem:"none",COL_TEXT);
                     if (_prodWarning.Length>0){y+=32f;Row(fr,panel,y,"Warning",_prodWarning,COL_BAD);}
                 }
                 Txt(fr,"AutoGrid Manager v"+VERSION,panel.X+24f,panel.Bottom-24f,COL_DIM,0.34f,TextAlignment.LEFT);
