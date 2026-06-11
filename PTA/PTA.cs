@@ -10,7 +10,11 @@
 //   CRUISE_ON / CRUISE_OFF     — disable brake thrusters, enable both features
 //   ASCEND_ON / ASCEND_OFF     — climb to space at constant speed
 //   DESCEND_ON / DESCEND_OFF   — descend to 3000m, keeping level
+//   SAVE <name>                — while connected, save dock target under name
+//   DOCK <name>                — fly to and connect to saved dock target
 // Display: tag any LCD or cockpit with [PTA] in the name
+// Docking: tag connectors with [PTA_DOCK] to mark them as dock connectors
+//          (falls back to all connectors if none are tagged)
 // -------------------------------------------------------------------------
 
 // -------------------------------------------------------------------------
@@ -23,6 +27,7 @@ private const string SEC_CRUISE   = "cruise";
 private const string SEC_ASCEND   = "ascend";
 private const string SEC_DESCEND  = "descend";
 private const string SEC_DISPLAY  = "display";
+private const string SEC_DOCK     = "dock";
 
 private const float  DEFAULT_HORIZON_CORRECTION  = 0.5f;
 private const float  DEFAULT_HORIZON_DAMPING     = 0.2f;
@@ -39,14 +44,24 @@ private const float  DEFAULT_ALTITUDE_PITCH_GAIN     = 0.002f;
 
 private const float  DEFAULT_DESCEND_TARGET    = 3000f;
 
+private const float  DEFAULT_DOCK_APPROACH_SPEED    = 10f;
+private const float  DEFAULT_DOCK_FINAL_SPEED       = 1.5f;
+private const float  DEFAULT_DOCK_WAYPOINT_DISTANCE = 15f;
+private const float  DOCK_ALIGN_GAIN                = 0.4f;
+private const float  DOCK_ALIGN_DAMPING             = 0.6f;
+private const float  DOCK_ALIGN_FWD_THRESHOLD       = 0.03f;
+private const float  DOCK_ALIGN_ANG_THRESHOLD       = 0.03f;
+private const float  DOCK_VEL_GAIN                  = 2.0f;
+private const float  DOCK_MAX_ACCEL                 = 3.0f;
+
 private const string DEFAULT_BRAKE_GROUP        = "";
-private const string DEFAULT_ASCEND_UP_GROUP   = "";
-private const string DEFAULT_ASCEND_DOWN_GROUP = "";
+private const string DEFAULT_ASCEND_UP_GROUP    = "";
+private const string DEFAULT_ASCEND_DOWN_GROUP  = "";
 private const int    DEFAULT_COCKPIT_SCREEN     = 0;
 private const string DEFAULT_THEME             = "cyber";
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.7";
+private const string VERSION   = "1.9";
 
 // -------------------------------------------------------------------------
 // Display colors  (mutable — overwritten by ApplyTheme on config load)
@@ -90,6 +105,10 @@ private float  _descendTarget  = DEFAULT_DESCEND_TARGET;
 private int    _cockpitScreen   = DEFAULT_COCKPIT_SCREEN;
 private string _theme           = DEFAULT_THEME;
 
+private float  _dockApproachSpeed    = DEFAULT_DOCK_APPROACH_SPEED;
+private float  _dockFinalSpeed       = DEFAULT_DOCK_FINAL_SPEED;
+private float  _dockWaypointDistance = DEFAULT_DOCK_WAYPOINT_DISTANCE;
+
 // -------------------------------------------------------------------------
 // State
 // -------------------------------------------------------------------------
@@ -110,11 +129,27 @@ private string _flashSubtitle = "";
 private Color  _flashColor    = new Color(97, 255, 214);
 private int    _flashTicks    = 0;
 
+private bool          _ptaActive        = false;
+private int           _dockedAlertTicks = 0;
+
+private enum DockPhase     { Aligning, Approaching, Final, Connecting }
+private enum AlignSubPhase { Forward, Roll }
+private bool          _dockActive      = false;
+private DockPhase     _dockPhase       = DockPhase.Aligning;
+private AlignSubPhase _alignSubPhase   = AlignSubPhase.Forward;
+private string    _dockStatus      = "---";
+private string    _dockTargetName  = "";
+private Vector3D  _dockTargetPos   = Vector3D.Zero;
+private Vector3D  _dockApproachDir = Vector3D.Forward;
+private Vector3D  _dockTargetUp    = Vector3D.Up;
+
 // -------------------------------------------------------------------------
 // Blocks
 // -------------------------------------------------------------------------
 
-private IMyShipController             _controller;
+private IMyShipController               _controller;
+private IMyShipConnector                _dockConnector;
+private readonly List<IMyShipConnector> _dockConnectors = new List<IMyShipConnector>();
 private readonly List<IMyGyro>        _gyros          = new List<IMyGyro>();
 private readonly List<IMyThrust>      _thrusters      = new List<IMyThrust>();
 private readonly List<IMyThrust>      _upThrusters    = new List<IMyThrust>();
@@ -141,6 +176,42 @@ public Program()
 
 public void Main(string argument, UpdateType updateSource)
 {
+    // Gate 1: PTA offline — only PTA_ON passes
+    if (!_ptaActive && argument != "PTA_ON")
+    {
+        Echo("PTA is offline — run PTA_ON first");
+        DrawOffline();
+        return;
+    }
+
+    // Gate 2: ship connected — only PTA_OFF, PTA_ON, and SAVE pass through.
+    // Skip during boot so the boot animation completes before the docked screen takes over.
+    if (_bootPhase == 0 && IsShipDocked()
+        && argument != "PTA_OFF" && argument != "PTA_ON"
+        && !argument.StartsWith("SAVE"))
+    {
+        if (argument.Length > 0)
+            _dockedAlertTicks = 5;
+        else if (_dockedAlertTicks > 0)
+            _dockedAlertTicks--;
+        // Slow tick so we notice when the connector drops without hammering the server
+        Runtime.UpdateFrequency = UpdateFrequency.Update100;
+        DrawDockedScreen();
+        return;
+    }
+
+    if (argument.StartsWith("SAVE "))
+    {
+        SaveDock(argument.Substring(5).Trim());
+        return;
+    }
+
+    if (argument.StartsWith("DOCK "))
+    {
+        StartDock(argument.Substring(5).Trim());
+        return;
+    }
+
     if (argument == "SET_ALTITUDE" || argument.StartsWith("SET_ALTITUDE "))
     {
         string suffix = argument.Length > "SET_ALTITUDE".Length
@@ -160,18 +231,34 @@ public void Main(string argument, UpdateType updateSource)
         case "PTA_ON":
             ParseConfig();
             InitBlocks();
+            _ptaActive      = true;
             _horizonActive  = false;
             _altitudeActive = false;
             _ascendActive   = false;
-            _bootPhase      = 1;
-            Runtime.UpdateFrequency = UpdateFrequency.Update10;
-            DrawBoot(0);
+            if (IsShipDocked())
+            {
+                _bootPhase = 0;
+                Runtime.UpdateFrequency = UpdateFrequency.Update100;
+                DrawDockedScreen();
+            }
+            else
+            {
+                _bootPhase = 1;
+                Runtime.UpdateFrequency = UpdateFrequency.Update10;
+                DrawBoot(0);
+            }
             return;
 
         case "PTA_OFF":
+            _ptaActive      = false;
             _horizonActive  = false;
             _altitudeActive = false;
             _bootPhase      = 0;
+            if (_dockActive)
+            {
+                _dockActive = false;
+                _dockStatus = "---";
+            }
             ReleaseGyros();
             ReleaseThrusters();
             foreach (var t in _brakeThrusters) t.Enabled = true;
@@ -234,8 +321,9 @@ public void Main(string argument, UpdateType updateSource)
 
         case "CRUISE_ON":
         {
-            if (_ascendActive) { Echo("CRUISE_ON blocked: ascend mode active"); DrawStatus(); return; }
+            if (_ascendActive)  { Echo("CRUISE_ON blocked: ascend mode active");  DrawStatus(); return; }
             if (_descendActive) { Echo("CRUISE_ON blocked: descend mode active"); DrawStatus(); return; }
+            if (_dockActive)    { Echo("CRUISE_ON blocked: dock mode active");    DrawStatus(); return; }
             ParseConfig();
             InitBlocks();
             FindBrakeThrusters();
@@ -251,6 +339,7 @@ public void Main(string argument, UpdateType updateSource)
         case "CRUISE_OFF":
             if (_ascendActive) { Echo("CRUISE_OFF blocked: ascend mode active"); DrawStatus(); return; }
             if (_descendActive) { Echo("CRUISE_OFF blocked: descend mode active"); DrawStatus(); return; }
+            if (_dockActive)   { Echo("CRUISE_OFF blocked: dock mode active");   DrawStatus(); return; }
             _horizonActive      = false;
             _altitudeActive     = false;
             _desiredPitchOffset = 0f;
@@ -265,8 +354,15 @@ public void Main(string argument, UpdateType updateSource)
         case "ASCEND_ON":
         {
             if (_brakeThrusters.Count > 0) { Echo("ASCEND_ON blocked: cruise mode active"); DrawStatus(); return; }
+            if (BlockedByGroupMode("ASCEND_ON")) return;
             ParseConfig();
             InitBlocks();
+            if (_controller.GetNaturalGravity().LengthSquared() < 0.001)
+            {
+                ShowFlash("NOT AVAILABLE IN SPACE", "Requires planetary gravity", COL_BAD, 6);
+                DrawStatus();
+                return;
+            }
             if (!CheckAscendRequirements()) { DrawAscendUnavailable(); return; }
             InitAscend();
             _ascendActive = true;
@@ -283,8 +379,15 @@ public void Main(string argument, UpdateType updateSource)
         {
             if (_ascendActive)             { Echo("DESCEND_ON blocked: ascend mode active");  DrawStatus(); return; }
             if (_brakeThrusters.Count > 0) { Echo("DESCEND_ON blocked: cruise mode active"); DrawStatus(); return; }
+            if (BlockedByGroupMode("DESCEND_ON")) return;
             ParseConfig();
             InitBlocks();
+            if (_controller.GetNaturalGravity().LengthSquared() < 0.001)
+            {
+                ShowFlash("NOT AVAILABLE IN SPACE", "Requires planetary gravity", COL_BAD, 6);
+                DrawStatus();
+                return;
+            }
             if (!CheckDescendRequirements()) { DrawDescendUnavailable(); return; }
             InitDescend();
             _descendActive = true;
@@ -318,12 +421,27 @@ public void Main(string argument, UpdateType updateSource)
         if (--_flashTicks == 0) _flashActive = false;
     }
 
+    // Cruise in space: drop horizon and altitude — they serve no purpose without gravity
+    if (_brakeThrusters.Count > 0 && (_horizonActive || _altitudeActive)
+        && _controller.GetNaturalGravity().LengthSquared() < 0.001)
+    {
+        _horizonActive      = false;
+        _altitudeActive     = false;
+        _desiredPitchOffset = 0f;
+        ReleaseGyros();
+        ReleaseThrusters();
+    }
+
     // Feature ticks — altitude runs first so pitch offset is set before horizon reads it
     if (_altitudeActive) AltitudeTick();
     if (_horizonActive)  HorizonTick();
     if (_ascendActive)   AscendTick();
     if (_descendActive)  DescendTick();
+    if (_dockActive)     DockTick();
     DrawStatus();
+    // Rebalance frequency every tick — catches the undock transition and drops to None
+    // when no features are active (e.g. immediately after connector disconnects)
+    ApplyUpdateFrequency();
 }
 
 // -------------------------------------------------------------------------
@@ -369,14 +487,7 @@ private void HorizonTick()
     Vector3D angularVelocity = _controller.GetShipVelocities().AngularVelocity;
     Vector3D gyroCommand     = tiltCorrection * _horizonCorrection - angularVelocity * _horizonDamping;
 
-    foreach (var gyro in _gyros)
-    {
-        Vector3D local = Vector3D.TransformNormal(gyroCommand, MatrixD.Transpose(gyro.WorldMatrix));
-        gyro.GyroOverride = true;
-        gyro.Pitch = -(float)local.X;
-        gyro.Yaw   = -(float)local.Y;
-        gyro.Roll  = -(float)local.Z;
-    }
+    ApplyGyroCommand(gyroCommand);
 }
 
 // -------------------------------------------------------------------------
@@ -507,6 +618,280 @@ private void SetAltitudeTo(float target)
     ini.Set(SEC_ALTITUDE, "target", _altitudeTarget);
     Me.CustomData = ini.ToString();
     Echo("Altitude target set to " + _altitudeTarget.ToString("F0") + "m");
+}
+
+// -------------------------------------------------------------------------
+// Dock — save and start
+// -------------------------------------------------------------------------
+
+private void SaveDock(string name)
+{
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        Echo("SAVE failed: no name given");
+        ShowFlash("SAVE FAILED", "NO NAME", COL_BAD, 5);
+        return;
+    }
+
+    if (_controller == null) InitBlocks();
+
+    IMyShipConnector connected = null;
+    int count = 0;
+    foreach (var c in _dockConnectors)
+    {
+        if (c.Status == MyShipConnectorStatus.Connected) { connected = c; count++; }
+    }
+
+    if (count == 0) { Echo("SAVE failed: no connector connected"); ShowFlash("SAVE FAILED", "NOT CONNECTED", COL_BAD, 5); return; }
+    if (count > 1)  { Echo("SAVE failed: multiple connectors connected"); ShowFlash("SAVE FAILED", "MULTI CONNECT", COL_BAD, 5); return; }
+
+    var ini = new MyIni();
+    ini.TryParse(Me.CustomData);
+    string section = "dock:" + name;
+    ini.Set(section, "connector", connected.CustomName);
+    ini.Set(section, "position",  V3Str(connected.WorldMatrix.Translation));
+    ini.Set(section, "approach",  V3Str(connected.WorldMatrix.Forward));
+    ini.Set(section, "up",        V3Str(connected.WorldMatrix.Up));
+    Me.CustomData = ini.ToString();
+
+    ShowFlash("DOCK SAVED", name, COL_OK, 5);
+    Echo("Dock saved: " + name + " via " + connected.CustomName);
+}
+
+private void StartDock(string name)
+{
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        Echo("DOCK failed: no name given");
+        ShowFlash("DOCK FAILED", "NO NAME", COL_BAD, 5);
+        return;
+    }
+
+    if (BlockedByGroupMode("DOCK")) return;
+
+    var ini = new MyIni();
+    ini.TryParse(Me.CustomData);
+    string section = "dock:" + name;
+
+    if (!ini.ContainsSection(section))
+    {
+        Echo("DOCK failed: no saved dock named " + name);
+        ShowFlash("DOCK FAILED", "UNKNOWN: " + name, COL_BAD, 5);
+        return;
+    }
+
+    Vector3D pos, approach, up;
+    if (!TryParseV3(ini.Get(section, "position").ToString(""), out pos)    ||
+        !TryParseV3(ini.Get(section, "approach").ToString(""), out approach) ||
+        !TryParseV3(ini.Get(section, "up").ToString(""),       out up))
+    {
+        Echo("DOCK failed: corrupt data for " + name);
+        ShowFlash("DOCK FAILED", "BAD DATA", COL_BAD, 5);
+        return;
+    }
+
+    string connName = ini.Get(section, "connector").ToString("");
+    var connectors  = new List<IMyShipConnector>();
+    GridTerminalSystem.GetBlocksOfType(connectors,
+        b => b.IsSameConstructAs(Me) && b.CustomName == connName);
+
+    if (connectors.Count == 0)
+    {
+        Echo("DOCK failed: connector not found: " + connName);
+        ShowFlash("DOCK FAILED", "NO CONNECTOR", COL_BAD, 5);
+        return;
+    }
+
+    ParseConfig();
+    InitBlocks();
+
+    _dockTargetName  = name;
+    _dockTargetPos   = pos;
+    _dockApproachDir = Vector3D.Normalize(approach);
+    _dockTargetUp    = Vector3D.Normalize(up);
+    _dockConnector   = connectors[0];
+    _dockPhase       = DockPhase.Aligning;
+    _alignSubPhase   = AlignSubPhase.Forward;
+    _dockStatus      = "ALIGNING";
+    _dockActive      = true;
+    _horizonActive   = false;
+    _altitudeActive  = false;
+
+    Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    DrawStatus();
+}
+
+// -------------------------------------------------------------------------
+// Dock — tick
+// -------------------------------------------------------------------------
+
+private void DockTick()
+{
+    if (_controller == null || _dockConnector == null) return;
+
+    Vector3D gravity   = _controller.GetNaturalGravity();
+    bool     inGravity = gravity.LengthSquared() > 0.001;
+
+    switch (_dockPhase)
+    {
+        case DockPhase.Aligning:    DockAlignTick(inGravity, gravity);   break;
+        case DockPhase.Approaching: DockApproachTick(inGravity, gravity); break;
+        case DockPhase.Final:       DockFinalTick(inGravity, gravity);    break;
+        case DockPhase.Connecting:  DockConnectTick();                    break;
+    }
+}
+
+private void DockAlignTick(bool inGravity, Vector3D gravity)
+{
+    Vector3D angVel  = _controller.GetShipVelocities().AngularVelocity;
+    Vector3D connFwd = _dockConnector.WorldMatrix.Forward;
+
+    if (inGravity)
+    {
+        // Planet: align both forward and roll to the saved connector orientation
+        Vector3D connUp    = _dockConnector.WorldMatrix.Up;
+        Vector3D alignCorr = Vector3D.Cross(connFwd, _dockApproachDir);
+        Vector3D rollCorr  = Vector3D.Cross(connUp,  _dockTargetUp);
+        double   fwdErr    = alignCorr.Length();
+        double   rollErr   = rollCorr.Length();
+
+        Vector3D gyroCmd = (alignCorr + rollCorr) * DOCK_ALIGN_GAIN
+                           - angVel * DOCK_ALIGN_DAMPING;
+        ApplyGyroCommand(gyroCmd);
+        ApplyVelocityTarget(Vector3D.Zero, gravity);
+
+        _dockStatus = "ALIGN " + (fwdErr + rollErr).ToString("F3");
+        if (fwdErr < DOCK_ALIGN_FWD_THRESHOLD && rollErr < DOCK_ALIGN_FWD_THRESHOLD
+            && angVel.Length() < DOCK_ALIGN_ANG_THRESHOLD)
+        {
+            _dockPhase  = DockPhase.Approaching;
+            _dockStatus = "APPROACHING";
+        }
+    }
+    else if (_alignSubPhase == AlignSubPhase.Forward)
+    {
+        // Space phase 1: align connector forward vector only
+        Vector3D alignCorr = Vector3D.Cross(connFwd, _dockApproachDir);
+        double   alignErr  = alignCorr.Length();
+
+        Vector3D gyroCmd = alignCorr * DOCK_ALIGN_GAIN - angVel * DOCK_ALIGN_DAMPING;
+        ApplyGyroCommand(gyroCmd);
+        ApplyVelocityTarget(Vector3D.Zero, gravity);
+
+        _dockStatus = "ALIGN FWD " + alignErr.ToString("F3");
+        if (alignErr < DOCK_ALIGN_FWD_THRESHOLD && angVel.Length() < DOCK_ALIGN_ANG_THRESHOLD)
+            _alignSubPhase = AlignSubPhase.Roll;
+    }
+    else
+    {
+        // Space phase 2: align roll once forward is settled
+        Vector3D connUp   = _dockConnector.WorldMatrix.Up;
+        Vector3D rollCorr = Vector3D.Cross(connUp, _dockTargetUp);
+        double   rollErr  = rollCorr.Length();
+
+        Vector3D gyroCmd = rollCorr * DOCK_ALIGN_GAIN - angVel * DOCK_ALIGN_DAMPING;
+        ApplyGyroCommand(gyroCmd);
+        ApplyVelocityTarget(Vector3D.Zero, gravity);
+
+        _dockStatus = "ALIGN ROLL " + rollErr.ToString("F3");
+        if (rollErr < DOCK_ALIGN_FWD_THRESHOLD && angVel.Length() < DOCK_ALIGN_ANG_THRESHOLD)
+        {
+            _dockPhase  = DockPhase.Approaching;
+            _dockStatus = "APPROACHING";
+        }
+    }
+}
+
+private void DockApproachTick(bool inGravity, Vector3D gravity)
+{
+    Vector3D connPos    = _dockConnector.WorldMatrix.Translation;
+    Vector3D waypoint   = _dockTargetPos - _dockApproachDir * _dockWaypointDistance;
+    Vector3D toWaypoint = waypoint - connPos;
+    double   dist       = toWaypoint.Length();
+
+    double   speed      = Math.Min(_dockApproachSpeed, Math.Max(1.0, dist * 0.5));
+    Vector3D desiredVel = dist > 0.5
+        ? Vector3D.Normalize(toWaypoint) * speed
+        : Vector3D.Zero;
+
+    ApplyVelocityTarget(desiredVel, gravity);
+    MaintainDockOrientation();
+
+    _dockStatus = "APPROACHING " + dist.ToString("F0") + "m";
+
+    if (dist < 1.0)
+    {
+        _dockPhase  = DockPhase.Final;
+        _dockStatus = "FINAL";
+    }
+}
+
+private void DockFinalTick(bool inGravity, Vector3D gravity)
+{
+    Vector3D connPos     = _dockConnector.WorldMatrix.Translation;
+    Vector3D toTarget    = _dockTargetPos - connPos;
+    double   dist        = toTarget.Length();
+    Vector3D currentVel  = _controller.GetShipVelocities().LinearVelocity;
+    double   approachSpd = Vector3D.Dot(currentVel, _dockApproachDir);
+
+    if (approachSpd > _dockFinalSpeed * 2.0 && dist < 5.0)
+    {
+        CompleteDock(abort: true, reason: "OVERSPEED");
+        return;
+    }
+
+    // Point directly at the actual connector position — corrects any lateral offset
+    // from the approach phase rather than flying along a fixed axis and missing
+    double   targetSpeed = Math.Min(_dockFinalSpeed, dist);
+    Vector3D desiredDir  = dist > 0.01 ? Vector3D.Normalize(toTarget) : _dockApproachDir;
+    ApplyVelocityTarget(desiredDir * targetSpeed, gravity);
+    MaintainDockOrientation();
+
+    _dockStatus = "FINAL " + dist.ToString("F1") + "m";
+
+    if (_dockConnector.Status == MyShipConnectorStatus.Connectable)
+    {
+        _dockPhase  = DockPhase.Connecting;
+        _dockStatus = "CONNECTING";
+    }
+    else if (dist < 0.1)
+    {
+        CompleteDock(abort: true, reason: "NOT CONNECTABLE");
+    }
+}
+
+private void MaintainDockOrientation()
+{
+    Vector3D connFwd = _dockConnector.WorldMatrix.Forward;
+    Vector3D connUp  = _dockConnector.WorldMatrix.Up;
+    Vector3D angVel  = _controller.GetShipVelocities().AngularVelocity;
+    Vector3D gyroCmd = (Vector3D.Cross(connFwd, _dockApproachDir) + Vector3D.Cross(connUp, _dockTargetUp))
+                       * (DOCK_ALIGN_GAIN * 0.5f)
+                       - angVel * DOCK_ALIGN_DAMPING;
+    ApplyGyroCommand(gyroCmd);
+}
+
+private void DockConnectTick()
+{
+    if (_dockConnector.Status == MyShipConnectorStatus.Connectable)
+        _dockConnector.Connect();
+
+    if (_dockConnector.Status == MyShipConnectorStatus.Connected)
+        CompleteDock(abort: false, reason: "");
+}
+
+private void CompleteDock(bool abort, string reason)
+{
+    ReleaseThrusters();
+    ReleaseGyros();
+    _horizonActive = false;
+    _dockActive    = false;
+    _dockStatus    = "---";
+
+    if (abort)
+        ShowFlash("DOCK ABORTED", reason, COL_BAD, 8);
+    // Success: IsShipDocked() is now true — DrawStatus() and ApplyUpdateFrequency()
+    // in the tick section pick it up immediately on the same frame
 }
 
 // -------------------------------------------------------------------------
@@ -645,6 +1030,171 @@ private void DrawOffline()
 // Display — status screen
 // -------------------------------------------------------------------------
 
+private void DrawStatus()
+{
+    if (_controller == null) { DrawOffline(); return; }
+    if (_ascendActive)       { DrawAscendStatus(); return; }
+    if (_descendActive)      { DrawDescendStatus(); return; }
+    if (_dockActive)         { DrawDockStatus(); return; }
+    if (IsShipDocked())      { DrawDockedScreen(); return; }
+    if (_flashActive)        { DrawFlash(); return; }
+
+    bool correcting =
+        (_horizonActive  && _horizonStatus.StartsWith("CORRECTING")) ||
+        (_altitudeActive && (_altitudeStatus.StartsWith("CLIMB") || _altitudeStatus.StartsWith("DESCEND") || _altitudeStatus.StartsWith("GLIDE")));
+    bool anyActive = _horizonActive || _altitudeActive || _brakeThrusters.Count > 0;
+
+    Color borderCol = correcting ? COL_WARN : anyActive ? COL_ACCENT : COL_DIM;
+
+    foreach (var s in _surfaces)
+    {
+        var vp  = VP(s);
+        var pan = Inset(vp, 10f);
+        float cx = vp.X + vp.Width * 0.5f;
+
+        using (var fr = s.DrawFrame())
+        {
+            Fill(fr, vp, COL_BG);
+            Fill(fr, pan, COL_PANEL);
+            DrawBorder(fr, pan, borderCol, 3f);
+
+            // Header
+            Txt(fr, "PTA", pan.X + 20f, pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
+            string modeLabel = GetModeLabel();
+            if (modeLabel.Length > 0)
+                Txt(fr, modeLabel, pan.Right - 20f, pan.Y + 20f, COL_WARN, 0.44f, TextAlignment.RIGHT);
+
+            // Divider
+            float dy = pan.Y + 52f;
+            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
+            dy += 14f;
+
+            // Feature rows
+            StatusRow(fr, pan, dy,
+                "HOR",
+                _horizonActive ? _horizonStatus : "OFF",
+                _horizonActive ? HorizonColor() : COL_DIM);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy,
+                "ALT",
+                _altitudeActive ? _altitudeStatus : "OFF",
+                _altitudeActive ? AltitudeColor() : COL_DIM);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy,
+                "CRUISE",
+                _brakeThrusters.Count > 0 ? _brakeThrusters.Count + " BRAKES OFF" : "OFF",
+                _brakeThrusters.Count > 0 ? COL_OK : COL_DIM);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy,
+                "ASCEND",
+                _ascendActive ? _ascendStatus : "OFF",
+                _ascendActive ? COL_OK : COL_DIM);
+
+            // Footer
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
+                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Display — dock status screen
+// -------------------------------------------------------------------------
+
+private void DrawDockStatus()
+{
+    foreach (var s in _surfaces)
+    {
+        var vp  = VP(s);
+        var pan = Inset(vp, 10f);
+        float cx = vp.X + vp.Width * 0.5f;
+
+        Vector3D connPos = _dockConnector != null
+            ? _dockConnector.WorldMatrix.Translation
+            : Vector3D.Zero;
+        double dist  = (_dockTargetPos - connPos).Length();
+        double speed = _controller.GetShipVelocities().LinearVelocity.Length();
+
+        using (var fr = s.DrawFrame())
+        {
+            Fill(fr, vp, COL_BG);
+            Fill(fr, pan, COL_PANEL);
+            DrawBorder(fr, pan, COL_ACCENT, 3f);
+
+            Txt(fr, "PTA",  pan.X + 20f,    pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
+            Txt(fr, "DOCK", pan.Right - 20f, pan.Y + 20f, COL_WARN,   0.44f, TextAlignment.RIGHT);
+
+            float dy = pan.Y + 52f;
+            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
+            dy += 14f;
+
+            StatusRow(fr, pan, dy, "TARGET", _dockTargetName, COL_TEXT);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy, "PHASE", _dockStatus, COL_WARN);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy, "DIST",  dist.ToString("F1") + "m",  COL_TEXT);
+            dy += 28f;
+            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
+            dy += 6f;
+
+            StatusRow(fr, pan, dy, "SPEED", speed.ToString("F1") + "m/s", COL_TEXT);
+
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
+                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
+        }
+    }
+}
+
+private void DrawDockedScreen()
+{
+    Color borderCol = _dockedAlertTicks > 0 ? COL_BAD : COL_OK;
+    Color msgCol    = _dockedAlertTicks > 0 ? COL_BAD : COL_OK;
+
+    foreach (var s in _surfaces)
+    {
+        var vp  = VP(s);
+        var pan = Inset(vp, 10f);
+        float cx = vp.X + vp.Width  * 0.5f;
+        float cy = vp.Y + vp.Height * 0.5f;
+
+        using (var fr = s.DrawFrame())
+        {
+            Fill(fr, vp, COL_BG);
+            Fill(fr, pan, COL_PANEL);
+            DrawBorder(fr, pan, borderCol, 3f);
+
+            Txt(fr, "PTA", pan.X + 20f, pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
+
+            float dy = pan.Y + 52f;
+            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), borderCol);
+            dy += 50f;
+
+            Txt(fr, "SHIP IS CONNECTED", cx, dy, msgCol, 0.72f, TextAlignment.CENTER);
+            dy += 46f;
+
+            Txt(fr, "Undock to use PTA features", cx, dy, COL_DIM, 0.38f, TextAlignment.CENTER);
+
+            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
+                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
+        }
+    }
+}
+
 private void DrawAscendStatus()
 {
     foreach (var s in _surfaces)
@@ -776,78 +1326,11 @@ private void DrawFlash()
     }
 }
 
-private void DrawStatus()
+private bool IsShipDocked()
 {
-    if (_controller == null) { DrawOffline(); return; }
-    if (_ascendActive)       { DrawAscendStatus(); return; }
-    if (_descendActive)      { DrawDescendStatus(); return; }
-    if (_flashActive)        { DrawFlash(); return; }
-
-    bool correcting =
-        (_horizonActive  && _horizonStatus.StartsWith("CORRECTING")) ||
-        (_altitudeActive && (_altitudeStatus.StartsWith("CLIMB") || _altitudeStatus.StartsWith("DESCEND") || _altitudeStatus.StartsWith("GLIDE")));
-    bool anyActive = _horizonActive || _altitudeActive || _brakeThrusters.Count > 0;
-
-    Color borderCol = correcting ? COL_WARN : anyActive ? COL_ACCENT : COL_DIM;
-
-    foreach (var s in _surfaces)
-    {
-        var vp  = VP(s);
-        var pan = Inset(vp, 10f);
-        float cx = vp.X + vp.Width * 0.5f;
-
-        using (var fr = s.DrawFrame())
-        {
-            Fill(fr, vp, COL_BG);
-            Fill(fr, pan, COL_PANEL);
-            DrawBorder(fr, pan, borderCol, 3f);
-
-            // Header
-            Txt(fr, "PTA", pan.X + 20f, pan.Y + 14f, COL_ACCENT2, 0.82f, TextAlignment.LEFT);
-            string modeLabel = GetModeLabel();
-            if (modeLabel.Length > 0)
-                Txt(fr, modeLabel, pan.Right - 20f, pan.Y + 20f, COL_WARN, 0.44f, TextAlignment.RIGHT);
-
-            // Divider
-            float dy = pan.Y + 52f;
-            Fill(fr, new RectangleF(pan.X + 10f, dy, pan.Width - 20f, 1f), COL_ACCENT);
-            dy += 14f;
-
-            // Feature rows
-            StatusRow(fr, pan, dy,
-                "HOR",
-                _horizonActive ? _horizonStatus : "OFF",
-                _horizonActive ? HorizonColor() : COL_DIM);
-            dy += 28f;
-            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
-            dy += 6f;
-
-            StatusRow(fr, pan, dy,
-                "ALT",
-                _altitudeActive ? _altitudeStatus : "OFF",
-                _altitudeActive ? AltitudeColor() : COL_DIM);
-            dy += 28f;
-            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
-            dy += 6f;
-
-            StatusRow(fr, pan, dy,
-                "CRUISE",
-                _brakeThrusters.Count > 0 ? _brakeThrusters.Count + " BRAKES OFF" : "OFF",
-                _brakeThrusters.Count > 0 ? COL_OK : COL_DIM);
-            dy += 28f;
-            Fill(fr, new RectangleF(pan.X + 16f, dy, pan.Width - 32f, 1f), COL_PANEL2);
-            dy += 6f;
-
-            StatusRow(fr, pan, dy,
-                "ASCEND",
-                _ascendActive ? _ascendStatus : "OFF",
-                _ascendActive ? COL_OK : COL_DIM);
-
-            // Footer
-            Txt(fr, "Planetary Travel Assistant  v" + VERSION,
-                cx, pan.Bottom - 16f, COL_DIM, 0.30f, TextAlignment.CENTER);
-        }
-    }
+    foreach (var c in _dockConnectors)
+        if (c.Status == MyShipConnectorStatus.Connected) return true;
+    return false;
 }
 
 private bool BlockedByGroupMode(string cmd)
@@ -855,6 +1338,7 @@ private bool BlockedByGroupMode(string cmd)
     if (_ascendActive)             { Echo(cmd + " blocked: ascend mode active");  DrawStatus(); return true; }
     if (_descendActive)            { Echo(cmd + " blocked: descend mode active"); DrawStatus(); return true; }
     if (_brakeThrusters.Count > 0) { Echo(cmd + " blocked: cruise mode active");  DrawStatus(); return true; }
+    if (_dockActive)               { Echo(cmd + " blocked: dock mode active");    DrawStatus(); return true; }
     return false;
 }
 
@@ -863,6 +1347,7 @@ private string GetModeLabel()
     if (_ascendActive)             return "ASCEND";
     if (_descendActive)            return "DESCEND";
     if (_brakeThrusters.Count > 0) return "CRUISE";
+    if (_dockActive)               return "DOCK";
     return "";
 }
 
@@ -1033,9 +1518,6 @@ private bool CheckDescendRequirements()
 {
     _descendIssues.Clear();
 
-    if (_controller.GetNaturalGravity().LengthSquared() < 0.001)
-        _descendIssues.Add("no gravity (in space)");
-
     if (string.IsNullOrWhiteSpace(_ascendUpGroup))
         _descendIssues.Add("no up_group set in config");
     else
@@ -1189,6 +1671,10 @@ private void ParseConfig()
     dirty |= EnsureInt   (ini, SEC_DISPLAY,  "cockpit_screen",  DEFAULT_COCKPIT_SCREEN,          ref _cockpitScreen);
     dirty |= EnsureString(ini, SEC_DISPLAY,  "theme",           DEFAULT_THEME,                   ref _theme);
 
+    dirty |= EnsureFloat (ini, SEC_DOCK,     "approach_speed",     DEFAULT_DOCK_APPROACH_SPEED,    ref _dockApproachSpeed);
+    dirty |= EnsureFloat (ini, SEC_DOCK,     "final_speed",        DEFAULT_DOCK_FINAL_SPEED,       ref _dockFinalSpeed);
+    dirty |= EnsureFloat (ini, SEC_DOCK,     "waypoint_distance",  DEFAULT_DOCK_WAYPOINT_DISTANCE, ref _dockWaypointDistance);
+
     ApplyTheme(_theme);
 
     if (dirty) Me.CustomData = ini.ToString();
@@ -1314,6 +1800,12 @@ private void InitBlocks()
     GridTerminalSystem.GetBlocksOfType(_gyros,     b => b.IsSameConstructAs(Me));
     GridTerminalSystem.GetBlocksOfType(_thrusters, b => b.IsSameConstructAs(Me));
 
+    _dockConnectors.Clear();
+    GridTerminalSystem.GetBlocksOfType(_dockConnectors,
+        b => b.IsSameConstructAs(Me) && b.CustomName.Contains("[PTA_DOCK]"));
+    if (_dockConnectors.Count == 0)
+        GridTerminalSystem.GetBlocksOfType(_dockConnectors, b => b.IsSameConstructAs(Me));
+
     InitSurfaces();
 
     if (_controller == null)
@@ -1399,18 +1891,75 @@ private void FindUpThrusters(Vector3D gravity)
     }
 }
 
+private void ApplyThrustForce(Vector3D force)
+{
+    foreach (var t in _thrusters)
+    {
+        if (t.MaxEffectiveThrust < 1f) continue;
+        Vector3D td  = -t.WorldMatrix.Forward;
+        double   dot = Vector3D.Dot(force, td);
+
+        if (dot > 0)
+        {
+            // Sum all thrusters pointing the same way so the group collectively
+            // produces exactly the required force — not N times it
+            double total = 0;
+            foreach (var t2 in _thrusters)
+            {
+                if (t2.MaxEffectiveThrust >= 1f && Vector3D.Dot(td, -t2.WorldMatrix.Forward) > 0.9)
+                    total += t2.MaxEffectiveThrust;
+            }
+            t.ThrustOverridePercentage = total > 0
+                ? (float)Math.Min(1.0, dot / total)
+                : 0.001f;
+        }
+        else
+        {
+            // 0.001f keeps override active so dampeners cannot fight our velocity commands
+            t.ThrustOverridePercentage = 0.001f;
+        }
+    }
+}
+
+private void ApplyVelocityTarget(Vector3D desiredVelocity, Vector3D gravity)
+{
+    Vector3D currentVel = _controller.GetShipVelocities().LinearVelocity;
+    float    mass       = _controller.CalculateShipMass().TotalMass;
+    Vector3D velError   = desiredVelocity - currentVel;
+
+    // Cap correction to DOCK_MAX_ACCEL so high-thrust ships don't overshoot
+    Vector3D correction  = velError * (mass * DOCK_VEL_GAIN);
+    float    maxCorrForce = mass * DOCK_MAX_ACCEL;
+    if (correction.LengthSquared() > (double)(maxCorrForce * maxCorrForce))
+        correction = Vector3D.Normalize(correction) * maxCorrForce;
+
+    ApplyThrustForce(correction - gravity * mass);
+}
+
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
 
 private void ApplyUpdateFrequency()
 {
-    if (_altitudeActive || _ascendActive || _descendActive)
+    if (_altitudeActive || _ascendActive || _descendActive || _dockActive)
         Runtime.UpdateFrequency = UpdateFrequency.Update10;
-    else if (_horizonActive)
+    else if (_horizonActive || IsShipDocked())
         Runtime.UpdateFrequency = UpdateFrequency.Update100;
     else
         Runtime.UpdateFrequency = UpdateFrequency.None;
+}
+
+private void ApplyGyroCommand(Vector3D worldCmd)
+{
+    foreach (var gyro in _gyros)
+    {
+        Vector3D local = Vector3D.TransformNormal(worldCmd, MatrixD.Transpose(gyro.WorldMatrix));
+        gyro.GyroOverride = true;
+        gyro.Pitch = -(float)local.X;
+        gyro.Yaw   = -(float)local.Y;
+        gyro.Roll  = -(float)local.Z;
+    }
 }
 
 private void ReleaseGyros()
@@ -1428,4 +1977,27 @@ private void ReleaseThrusters()
 {
     foreach (var t in _thrusters)
         t.ThrustOverridePercentage = 0f;
+}
+
+private string V3Str(Vector3D v)
+{
+    return v.X.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) + ":" +
+           v.Y.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) + ":" +
+           v.Z.ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
+}
+
+private bool TryParseV3(string s, out Vector3D v)
+{
+    v = Vector3D.Zero;
+    if (string.IsNullOrWhiteSpace(s)) return false;
+    var parts = s.Split(':');
+    if (parts.Length != 3) return false;
+    double x, y, z;
+    var ic = System.Globalization.CultureInfo.InvariantCulture;
+    var ns = System.Globalization.NumberStyles.Float;
+    if (!double.TryParse(parts[0], ns, ic, out x) ||
+        !double.TryParse(parts[1], ns, ic, out y) ||
+        !double.TryParse(parts[2], ns, ic, out z)) return false;
+    v = new Vector3D(x, y, z);
+    return true;
 }
