@@ -1,6 +1,5 @@
-# AutoGrid Manager — Full Guide
+﻿# AutoGrid Manager v1.5 -- Full Guide
 
-**Script:** AutoGrid Manager v1.3+
 **Author:** RevGamer
 **LCD Tag:** `[AGM-S]`
 
@@ -8,30 +7,21 @@
 
 ## What AGM Does
 
-AutoGrid Manager is a base management script for Space Engineers. One programmable block handles:
-
-- Inventory management and auto-sorting
-- Automated production — assemblers, refineries, autocrafting
-- Power monitoring and reactor automation
-- Fuel and life support monitoring
-- Stock dashboards
-- Alert system with warning lights and corner LCDs
+One PB handles inventory sorting, automated production, power monitoring, reactor automation, fuel/life support, stock dashboards, and alerts.
 
 ---
 
 ## Quick Start
 
 1. Paste `AGM.cs` into a Programmable Block
-2. Recompile — default Custom Data is written automatically
+2. Compile -- default Custom Data written automatically
 3. Edit PB Custom Data to point at your block groups
-4. Add `[AGM-S]` to LCD names and put one dashboard command in each LCD Custom Data
-5. Recompile again
+4. Add `[AGM-S]` to LCD block names, put one dashboard command in each LCD Custom Data
+5. Recompile
 
 ---
 
 ## Block Groups
-
-AGM works best with named block groups. Recommended:
 
 ```
 Base Batteries
@@ -43,16 +33,15 @@ Base Hydrogen Tanks
 Base Oxygen Tanks
 ```
 
-Reference groups in Custom Data with `G:` prefix:
+Use `G:` prefix in config:
 
 ```ini
 batteries=G:Base Batteries
-reactors=G:Base Reactors
 ```
 
 ---
 
-## PB Custom Data — Full Reference
+## PB Custom Data -- Full Reference
 
 ### [Core]
 
@@ -80,8 +69,9 @@ battery_low_percent=25
 hydrogen_low_percent=20
 oxygen_low_percent=20
 uranium_low_kg=5
-cargo_warning_percent=90
-cargo_full_percent=98
+ingot_low_percent=20
+component_low_percent=20
+ammo_low_percent=20
 ```
 
 ### [Power:Base]
@@ -145,20 +135,25 @@ include_ungrouped=false
 
 ```ini
 [Production]
+enabled=true
 monitor_only=false
 autocraft_components=true
+auto_disassemble=false
 sort_assembler_queue=true
 sort_refinery_input=true
 max_queue_per_run=2
 max_queue_amount=500
 assemblers=G:Base Assemblers
 refineries=G:Base Refineries
-enabled=true
 show_machine_details=true
 show_missing_resources=false
+show_blocked_assemblers=true
+show_blocked_refineries=true
 ```
 
-**Important:** `monitor_only=false` is required for autocrafting to queue items.
+**`monitor_only=false` is required for autocrafting to queue items.**
+
+**`auto_disassemble=false` by default.** When enabled, disassembly will not fight autocrafting -- it skips any component with assembly queued (v1.5).
 
 ### [RefineryPriority]
 
@@ -200,31 +195,36 @@ LargeTube=10000
 Display=5000
 BulletproofGlass=5000
 PowerCell=5000
+SolarCell=1000
+Detector=1000
+RadioCommunication=1000
+Medical=200
 Reactor=10000
 Thrust=12000
 GravityGenerator=500
 Superconductor=10000
+Explosives=500
+Canvas=200
+ShieldComponent=2000
 ```
 
 ---
 
-## LCD Dashboard Setup
+## LCD Dashboard Commands
 
-Add `[AGM-S]` to the LCD block name. Put one command in the LCD Custom Data.
-
-### All Dashboard Commands
+Add `[AGM-S]` to LCD block name. Put one command in Custom Data.
 
 | Custom Data | Page |
-|---|---|
+|-------------|------|
 | `CoreDashboard` | System overview |
 | `AlertDashboard` | Alert status |
 | `WarningDashboard` | Warning details |
 | `PowerDashboard page=1` | Power overview |
-| `ReactorRefuel` | Reactor uranium status |
+| `ReactorRefuel` | Reactor uranium |
 | `BatteryControl` | Battery/reactor automation |
 | `LogisticsDashboard` | Sorting status |
 | `ProductionDashboard page=1` | Production overview |
-| `ProductionDetails` | Assembler/refinery jobs |
+| `ProductionDetails` | Assembler details |
 | `ProductionWarnings` | Refinery details |
 | `InventoryStock page=1` | All items |
 | `OreStock page=1` | Ores |
@@ -233,78 +233,67 @@ Add `[AGM-S]` to the LCD block name. Put one command in the LCD Custom Data.
 | `AmmoStock page=1` | Ammo |
 | `ToolStock page=1` | Tools |
 | `BottleStock page=1` | Bottles |
+| `FoodStock page=1` | Foods (v1.5) |
+| `SeedStock page=1` | Seeds (v1.5) |
+| `IngredientStock page=1` | Ingredients (v1.5) |
 | `Autocrafting page=1` | Autocrafting quotas |
 | `FuelLifeSupport` | H2/O2 and life support |
-| `LifeSupport` | Life support only |
 
-Multi-page: add separate LCDs with `page=1`, `page=2`, `page=3` etc.
+Multi-page: separate LCDs with `page=1`, `page=2` etc.
 
 ---
 
 ## Cargo Container Tags
 
-Put these in the **block name** to tell AGM where to sort items:
+Put in block **name** OR **Custom Data** (v1.5 supports both):
 
 | Tag | Item type |
-|---|---|
+|-----|-----------|
 | `{Ore 1}` | Ores |
 | `{Ingot 1}` | Ingots |
 | `{Component 1}` | Components |
 | `{Ammo 1}` | Ammo |
-| `{Tool 1}` | Tools |
+| `{Tools 1}` | Tools |
 | `{Bottle 1}` | Bottles |
+| `{Food 1}` | Foods (v1.5) |
+| `{Seed 1}` | Seeds (v1.5) |
+| `{Ingredient 1}` | Ingredients (v1.5) |
 
-Lower number fills first. Number up for multiple containers of the same type: `{Ore 1}`, `{Ore 2}` etc.
+Lower number fills first. `{Ore 1}`, `{Ore 2}` etc. for multiple containers.
 
-If `auto_assign=true`, AGM will automatically name empty containers when it needs somewhere to put items.
-
-### Protection Tags (block name)
+### Protection Tags
 
 | Tag | Effect |
-|---|---|
-| `[No Sorting]` | AGM ignores this grid |
+|-----|--------|
+| `[No Sorting]` | Connector: excludes entire docked grid |
 | `{Locked}` | Container never used as sort destination |
-| `{Manual}` | Assembler/refinery excluded from production management |
-| `{Hidden}` | Block excluded from all AGM scanning |
+| `{Manual}` | Block excluded from production management |
+| `{Hidden}` | Block excluded from all scanning |
 
 ---
 
 ## Alert Lights and Corner LCDs
 
-Put `[AGM-LIGHT]` in the **Custom Data** of any light block or corner LCD:
+Put `[AGM-LIGHT]` in the **Custom Data** of any light or corner LCD:
 
 ```ini
 [AGM-LIGHT]
 watch=Battery
 ```
 
-Valid `watch=` values: `Battery`, `Cargo`, `Hydrogen`, `Oxygen`, `Uranium`, `Production`, `Charging`, `Power OK`, or blank for overall alert.
+Valid `watch=`: Battery, Cargo, Hydrogen, Oxygen, Uranium, Production, Charging, Power OK, blank (overall).
 
-Do NOT add `[AGM-S]` to these blocks — they are managed separately.
-
-See `AGM_Alert_Light_Guide.md` for full details.
-
----
-
-## Assembler Routing
-
-AGM automatically detects Basic Assemblers by their SubtypeId and routes accordingly:
-
-- **Basic components** (SteelPlate, InteriorPlate, Construction, SmallTube, LargeTube, Motor, Display, BulletproofGlass, Girder, MetalGrid) → Basic Assemblers first
-- **Advanced components** → Advanced Assemblers first
-- Work is spread across all idle master assemblers — not just one
-- Cooperative mode assemblers are skipped in queuing — they pick up work from the master automatically
-- Assembler Details page shows `[M]` for master assemblers, `COOP` for cooperative ones
+Do NOT add `[AGM-S]` to these blocks.
 
 ---
 
 ## Troubleshooting
 
 | Problem | Fix |
-|---|---|
-| LCD is blank | Confirm `[AGM-S]` in block name and valid command in Custom Data |
-| AGM sees other-grid blocks | Use `G:Group Name` and `include_ungrouped=false` |
-| Autocrafting not queuing | Set `monitor_only=false` in `[Production]` |
-| Basic Assemblers idle | Check they are not all in cooperative mode — need at least one master |
-| Alert light not working | Check `[AGM-LIGHT]` is in Custom Data not block name |
-| CoreDashboard flickering on corner LCD | Remove `[AGM-S]` from that block — use `[AGM-LIGHT]` only |
+|---------|-----|
+| LCD blank | Check `[AGM-S]` in block name, valid command in Custom Data |
+| AGM pulls from docked ship | Put `[No Sorting]` in connector Custom Data |
+| Autocrafting not queuing | Set `monitor_only=false` in [Production] |
+| Assembler stuck after disassembly run | Fixed in v1.5 -- update script |
+| Alert light flickering | Remove `[AGM-S]` from that block |
+| Instruction limit | Lower `max_moves_per_run` and `max_queue_per_run` |
