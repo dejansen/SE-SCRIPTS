@@ -1,8 +1,6 @@
 # Space Engineers — Complete Item TypeId Reference
 
-Read from game files: `C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Content\Data\`
-
-Last updated: AGM v1.5 session (June 2026)
+Last updated: RevGamer (June 2026)
 
 ---
 
