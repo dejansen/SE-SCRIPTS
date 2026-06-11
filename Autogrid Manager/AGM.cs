@@ -76,8 +76,9 @@ namespace Script
 
         private bool   _globalPause        = false;
         private bool   _includeDockedGrids = false;
-        private string _noSortTag  = "[No Sorting]";
+        private string _noSortTag  = "{No AGM}";
         private readonly HashSet<IMyCubeGrid> _dockedGridIds = new HashSet<IMyCubeGrid>();
+        private int _lastConnectedCount = 0;
         private string _lockedTag  = "{Locked}";
         private string _manualTag  = "{Manual}";
         private string _hiddenTag  = "{Hidden}";
@@ -191,6 +192,17 @@ namespace Script
             {
                 Reload();
             }
+            // Instant rescan when a connector docks/undocks
+            if ((updateSource & UpdateType.Update10) != 0)
+            {
+                var _tmpCons=new List<IMyShipConnector>();
+                GridTerminalSystem.GetBlocksOfType(_tmpCons,c=>c.IsConnected);
+                if (_tmpCons.Count!=_lastConnectedCount)
+                {
+                    _lastConnectedCount=_tmpCons.Count;
+                    ScanBlocks(); BuildCargoAndSources();
+                }
+            }
 
             double dt = Runtime.TimeSinceLastRun.TotalSeconds;
             if (dt <= 0) dt = 0.1667;
@@ -280,20 +292,18 @@ namespace Script
             for (int ci=0;ci<_cons.Count;ci++)
             {
                 var con=_cons[ci];
-                if (con.Status!=MyShipConnectorStatus.Connected||con.OtherConnector==null) continue;
+                if (!con.IsConnected||con.OtherConnector==null) continue;
                 bool noSort=HasToken(con.CustomData,_noSortTag)||HasToken(con.CustomName,_noSortTag);
                 if (!_includeDockedGrids||noSort)
                 {
-                    if (con.OtherConnector.CubeGrid.IsSameConstructAs(Me.CubeGrid))
-                        _dockedGridIds.Add(con.CubeGrid);
-                    else
-                        _dockedGridIds.Add(con.OtherConnector.CubeGrid);
+                    IMyCubeGrid shipGrid=con.OtherConnector.CubeGrid;
+                    if (shipGrid!=Me.CubeGrid) _dockedGridIds.Add(shipGrid);
                 }
             }
-            _dockedGridIds.Remove(Me.CubeGrid);
             GridTerminalSystem.GetBlocksOfType<IMyTerminalBlock>(_blocks, b =>
             {
-                foreach(var dg in _dockedGridIds){if(b.CubeGrid==dg||b.CubeGrid.IsSameConstructAs(dg))return false;}
+                if (_dockedGridIds.Contains(b.CubeGrid)) return false;
+                foreach(var dg in _dockedGridIds){if(b.CubeGrid.IsSameConstructAs(dg))return false;}
                 if (_includeDockedGrids) return true;
                 return b.IsSameConstructAs(Me);
             });
@@ -440,7 +450,7 @@ ShieldComponent=2000";
         private void ReadConfig()
         {
             _globalPause=false; _includeDockedGrids=false;
-            _noSortTag="[No Sorting]"; _lockedTag="{Locked}"; _manualTag="{Manual}"; _hiddenTag="{Hidden}";
+            _noSortTag="{No AGM}"; _lockedTag="{Locked}"; _manualTag="{Manual}"; _hiddenTag="{Hidden}";
             _powerEnabled=true; _logisticsEnabled=true; _prodEnabled=true;
             _autoAssign=true; _maxMoves=2; _monitorOnly=true; _autocraftComps=true;
             _sortAsmQueue=true; _sortRefInput=true; _maxQueuePerRun=2; _maxQueueAmount=500;
@@ -953,6 +963,7 @@ ShieldComponent=2000";
                     _cargos.Add(c); if (!c.Locked&&!c.Manual&&!c.Hidden) AddSource(b,c.Inv,c.Type); continue;
                 }
                 if (b is IMyReactor||b is IMyGasGenerator||b is IMyGasTank) continue;
+                if (b is IMyUserControllableGun||b is IMyLargeTurretBase||b is IMySmallGatlingGun||b is IMySmallMissileLauncher) continue;
                 if (HasToken(b.CustomName,_lockedTag)||HasToken(b.CustomName,_manualTag)||HasToken(b.CustomName,_hiddenTag)) continue;
                 if (b.InventoryCount>=2&&(b is IMyAssembler||b is IMyRefinery)) AddSource(b,b.GetInventory(1),"");
                 else if (b.InventoryCount==1) AddSource(b,b.GetInventory(0),"");
@@ -1375,9 +1386,9 @@ ShieldComponent=2000";
         private static readonly string[] _knownIngotIds = {"Cobalt","Gold","Stone","Iron","Magnesium","Nickel","Platinum","Silicon","Silver","Uranium"};
         private static readonly string[] _knownAmmoIds  = {"AutocannonClip","LargeCalibreAmmo","MediumCalibreAmmo","Missile200mm","NATO_25x184mm","SemiAutoPistolMagazine","FullAutoPistolMagazine","ElitePistolMagazine"};
         private static readonly string[] _knownCompIds  = {"BulletproofGlass","Canvas","Computer","Construction","Detector","Display","Explosives","Girder","GravityGenerator","InteriorPlate","LargeTube","Medical","MetalGrid","Motor","PowerCell","RadioCommunication","Reactor","SmallTube","SolarCell","SteelPlate","Superconductor","Thrust"};
-        private static readonly string[] _knownFoodIds  = {"Burrito","Curry","FrontierStew","MammalMeatCooked","Lasagna","KelpCrisp","PowerKit","Medkit"};
-        private static readonly string[] _knownSeedIds  = {"CoffeeBeanSeed","FruitSeeds","GrainSeeds","MushroomSpores","VegetableSeeds"};
-        private static readonly string[] _knownIngredientIds = {"FakeMeat","Wheat","Meat"};
+        private static readonly string[] _knownFoodIds  = {"ClangCola","CosmicCoffee","MealPack_KelpCrisp","MealPack_FruitBar","MealPack_GardenSlaw","MealPack_Chili","MealPack_Ramen","MealPack_Flatbread","MealPack_FruitPastry","MealPack_VeggieBurger","MealPack_Curry","MealPack_Dumplings","MealPack_Spaghetti","MealPack_Lasagna","MealPack_Burrito","MealPack_FrontierStew","MealPack_SearedSabiroid","MealPack_SteakDinner","MammalMeatCooked","InsectMeatCooked"};
+        private static readonly string[] _knownSeedIds  = {"Fruit","Grain","Mushrooms","Vegetables"};
+        private static readonly string[] _knownIngredientIds = {"Algae","Grain","Fruit","Mushrooms","Vegetables","MammalMeatRaw","InsectMeatRaw"};
 
         private void EnsureKnownItems()
         {
@@ -1386,8 +1397,8 @@ ShieldComponent=2000";
             foreach (var n in _knownAmmoIds)       EnsureStock("Ammo",SplitName(n),"MyObjectBuilder_AmmoMagazine/"+n);
             foreach (var n in _knownCompIds)       EnsureStock("Component",SplitName(n),"MyObjectBuilder_Component/"+n);
             foreach (var n in _knownFoodIds)       EnsureStock("Food",SplitName(n),"MyObjectBuilder_ConsumableItem/"+n);
-            foreach (var n in _knownSeedIds)       EnsureStock("Seed",SplitName(n),"MyObjectBuilder_TreeObject/"+n);
-            foreach (var n in _knownIngredientIds) EnsureStock("Ingredient",SplitName(n),"MyObjectBuilder_Ingot/"+n);
+            foreach (var n in _knownSeedIds)       EnsureStock("Seed",SplitName(n)+" Seeds","MyObjectBuilder_SeedItem/"+n);
+            foreach (var n in _knownIngredientIds) { string tid=(n.Equals("Algae",SC)||n.Equals("Grain",SC))?"MyObjectBuilder_PhysicalObject":"MyObjectBuilder_ConsumableItem"; EnsureStock("Ingredient",SplitName(n),tid+"/"+n); }
         }
 
         private void EnsureStock(string cat, string name, string icon)
@@ -1880,11 +1891,12 @@ ShieldComponent=2000";
           double pct=max2>0?cur/max2*100.0:0.0; var row=new RectangleF(panel.X+16f,y,panel.Width-32f,26f);Fill(fr,row,COL_PANEL2);DrawBorder(fr,row,COL_DIM,1f);
           Txt(fr,label,row.X+10f,row.Y+4f,COL_ROW_TEXT,0.46f,TextAlignment.LEFT);Txt(fr,count+" cargo  "+pct.ToString("0.0")+"%",row.Right-10f,row.Y+4f,pct>97?COL_BAD:COL_ROW_TEXT,0.46f,TextAlignment.RIGHT); }
 
-        private string ItemCategory(MyItemType t){string s=t.TypeId.ToString(),sub=t.SubtypeId.ToString();if(s.EndsWith("_Ore"))return "Ore";if(s.EndsWith("_Ingot"))return "Ingot";if(s.EndsWith("_Component"))return "Component";if(s.EndsWith("_AmmoMagazine"))return "Ammo";if(s.EndsWith("_PhysicalGunObject"))return "Tool";if(s.EndsWith("_GasContainerObject")||s.EndsWith("_OxygenContainerObject"))return "Bottle";if(s.EndsWith("_ConsumableItem")||s.EndsWith("_Consumable"))return "Food";if(s.EndsWith("_TreeObject"))return "Seed";if(IsFoodIngredient(sub))return "Ingredient";return "";}
-        private string DisplayName(MyItemType t){string n=t.SubtypeId.ToString();if(n=="Stone"&&t.TypeId.ToString().EndsWith("_Ingot"))return "Gravel";return SplitName(n);}
+        private string ItemCategory(MyItemType t){string s=t.TypeId.ToString(),sub=t.SubtypeId.ToString();if(s.EndsWith("_Ore"))return "Ore";if(s.EndsWith("_Ingot"))return "Ingot";if(s.EndsWith("_Component"))return "Component";if(s.EndsWith("_AmmoMagazine"))return "Ammo";if(s.EndsWith("_PhysicalGunObject"))return "Tool";if(s.EndsWith("_GasContainerObject")||s.EndsWith("_OxygenContainerObject"))return "Bottle";if(s.EndsWith("_SeedItem"))return "Seed";if(s.EndsWith("_ConsumableItem")||s.EndsWith("_Consumable")){if(IsIngredient(sub))return "Ingredient";return "Food";}if(s.EndsWith("_PhysicalObject")){if(IsIngredient(sub))return "Ingredient";return "";}return "";}
+        private string DisplayName(MyItemType t){string n=t.SubtypeId.ToString();if(n=="Stone"&&t.TypeId.ToString().EndsWith("_Ingot"))return "Gravel";if(t.TypeId.ToString().EndsWith("_SeedItem"))return SplitName(n)+" Seeds";return SplitName(n);}
         private bool IsFoodIngredient(string sub){string[]ids={"FakeMeat","Wheat","Meat","FakeMeat"};for(int i=0;i<ids.Length;i++)if(sub.IndexOf(ids[i],StringComparison.OrdinalIgnoreCase)>=0)return true;return false;}
-        private string ItemIcon(MyItemType t){string s=t.TypeId.ToString(),sub=t.SubtypeId.ToString();if(s.EndsWith("_Ore"))return "MyObjectBuilder_Ore/"+sub;if(s.EndsWith("_Ingot"))return "MyObjectBuilder_Ingot/"+sub;if(s.EndsWith("_Component"))return "MyObjectBuilder_Component/"+sub;if(s.EndsWith("_AmmoMagazine"))return "MyObjectBuilder_AmmoMagazine/"+sub;if(s.EndsWith("_PhysicalGunObject"))return "MyObjectBuilder_PhysicalGunObject/"+sub;if(s.EndsWith("_GasContainerObject"))return "MyObjectBuilder_GasContainerObject/"+sub;if(s.EndsWith("_OxygenContainerObject"))return "MyObjectBuilder_OxygenContainerObject/"+sub;if(s.EndsWith("_ConsumableItem")||s.EndsWith("_Consumable"))return "MyObjectBuilder_ConsumableItem/"+sub;if(s.EndsWith("_TreeObject"))return "MyObjectBuilder_TreeObject/"+sub;return "IconInventory";}
-        private string SplitName(string n){if(string.IsNullOrEmpty(n))return "";if(n.EndsWith("Item",SC))n=n.Substring(0,n.Length-4);_sb.Clear();for(int i=0;i<n.Length;i++){char c=n[i];bool nd=char.IsDigit(c);bool pd=i>0&&char.IsDigit(n[i-1]);if(i>0&&((char.IsUpper(c)&&char.IsLower(n[i-1]))||(nd&&!pd)||(!nd&&pd)))_sb.Append(' ');_sb.Append(c);}return _sb.ToString().Trim();}
+        private bool IsIngredient(string sub){string[]ids={"Algae","Grain","Fruit","Mushrooms","Vegetables","MammalMeatRaw","MammalMeatCooked","InsectMeatRaw","InsectMeatCooked","Medkit","Powerkit","DrillInhibitorBlocker","PlayerInhibitorBlocker"};for(int i=0;i<ids.Length;i++)if(sub.Equals(ids[i],StringComparison.OrdinalIgnoreCase))return true;return false;}
+        private string ItemIcon(MyItemType t){string s=t.TypeId.ToString(),sub=t.SubtypeId.ToString();if(s.EndsWith("_Ore"))return "MyObjectBuilder_Ore/"+sub;if(s.EndsWith("_Ingot"))return "MyObjectBuilder_Ingot/"+sub;if(s.EndsWith("_Component"))return "MyObjectBuilder_Component/"+sub;if(s.EndsWith("_AmmoMagazine"))return "MyObjectBuilder_AmmoMagazine/"+sub;if(s.EndsWith("_PhysicalGunObject"))return "MyObjectBuilder_PhysicalGunObject/"+sub;if(s.EndsWith("_GasContainerObject"))return "MyObjectBuilder_GasContainerObject/"+sub;if(s.EndsWith("_OxygenContainerObject"))return "MyObjectBuilder_OxygenContainerObject/"+sub;if(s.EndsWith("_SeedItem"))return "MyObjectBuilder_SeedItem/"+sub;if(s.EndsWith("_ConsumableItem")||s.EndsWith("_Consumable"))return "MyObjectBuilder_ConsumableItem/"+sub;if(s.EndsWith("_PhysicalObject"))return "MyObjectBuilder_PhysicalObject/"+sub;return "IconInventory";}
+        private string SplitName(string n){if(string.IsNullOrEmpty(n))return "";if(n.StartsWith("MealPack_",SC))n=n.Substring(9);if(n.EndsWith("Item",SC))n=n.Substring(0,n.Length-4);_sb.Clear();for(int i=0;i<n.Length;i++){char c=n[i];bool nd=char.IsDigit(c);bool pd=i>0&&char.IsDigit(n[i-1]);if(i>0&&((char.IsUpper(c)&&char.IsLower(n[i-1]))||(nd&&!pd)||(!nd&&pd)))_sb.Append(' ');_sb.Append(c);}return _sb.ToString().Trim();}
         private double StockQuota(StockEntry e){if(e.Category.Equals("Component",SC)){double q;if(_compQuotas.TryGetValue(e.Name.Replace(" ",""),out q))return q;if(e.Name.IndexOf("Steel Plate",SC)>=0)return 50000;if(e.Name.IndexOf("Interior Plate",SC)>=0)return 50000;}return Math.Max(1,e.Amount);}
         private string StockKind(IMyTerminalBlock b){string d=b.CustomData??"";if(d.IndexOf("InventoryStock",SC)>=0||d.IndexOf("Inventory Stock",SC)>=0)return "Inventory";if(d.IndexOf("OreStock",SC)>=0)return "Ore";if(d.IndexOf("IngotStock",SC)>=0)return "Ingot";if(d.IndexOf("ComponentStock",SC)>=0)return "Component";if(d.IndexOf("AmmoStock",SC)>=0)return "Ammo";if(d.IndexOf("ToolStock",SC)>=0)return "Tool";if(d.IndexOf("BottleStock",SC)>=0)return "Bottle";if(d.IndexOf("FoodStock",SC)>=0)return "Food";if(d.IndexOf("SeedStock",SC)>=0)return "Seed";if(d.IndexOf("IngredientStock",SC)>=0)return "Ingredient";return "";}
         private int StockPage(IMyTerminalBlock b,string kind){string d=b.CustomData??"",compact=(kind.Equals("Inventory",SC)?"InventoryStock":kind+"Stock");string[]lines=d.Split(new char[]{'\r','\n'},StringSplitOptions.RemoveEmptyEntries);for(int i=0;i<lines.Length;i++){string line=StripComment(lines[i]).Trim();if(line.IndexOf(compact,SC)<0)continue;int n=PageNum(line,compact);if(n>0)return n;}return 1;}
