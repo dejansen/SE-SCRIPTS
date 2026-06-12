@@ -192,10 +192,12 @@ Event Controllers cannot run PBs directly. Use a **Timer Block** as the bridge:
 - Broadcasts on the default channel: *"East reactor offline"*
 
 **Routing to a specific channel (multi-channel):**
-- Argument: `@[PLAYERA]:HYDROGEN_LOW`
-- Broadcasts *"Hydrogen tanks critically low"* on channel `[PLAYERA]` instead of the default
+- Argument: `@PLAYERA:HYDROGEN_LOW`
+- Broadcasts *"Hydrogen tanks critically low"* on channel `PLAYERA` instead of the default
 
 The `@channel:` prefix is optional and per-message. The configured `channel` in Custom Data remains the default for all messages without a prefix. Shortcodes work normally after the `:`.
+
+> **Important:** the channel name after `@` must match the receiver's `channel` config exactly — same capitalisation, same characters, no extra brackets unless the receiver is also configured with them.
 
 ### Shortcode reference
 
@@ -224,13 +226,13 @@ A grid that is always online (e.g. an airport control tower) can act as a relay:
 
 **How to wire it:**
 
-1. Configure the relay PB with `mode = both` and `channel = [PLAYERA]`.
-2. Buildings send player-addressed messages using `@[PLAYERA]:HYDROGEN_LOW`.
+1. Configure the relay PB with `mode = both` and `channel = PLAYERA`.
+2. Buildings send player-addressed messages using `@PLAYERA:HYDROGEN_LOW`.
    The relay receives and stores them like a normal receiver.
 3. Place a **Sensor Block** or use a **Connector** event on the landing pad to detect arrival.
 4. Wire the arrival event to a **Timer Block** → **Run** the relay PB with argument `FORWARD`.
-5. `FORWARD` re-broadcasts all stored messages on `[PLAYERA]`.
-   Player A's ship receiver (also on `[PLAYERA]`) picks them up.
+5. `FORWARD` re-broadcasts all stored messages on `PLAYERA`.
+   Player A's ship receiver (also on `PLAYERA`) picks them up.
 
 **With `ack = true` on the relay:**
 `FORWARD` enqueues the messages instead of fire-and-forget. The relay's retry loop keeps re-broadcasting every `retry_seconds` until Player A's receiver ACKs. Useful if their PB is slow to come online after landing.
