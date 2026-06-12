@@ -1,5 +1,5 @@
 // =====================================================================
-// HERMES — Intergrid Messaging Service  v1.6
+// HERMES — Intergrid Messaging Service  v1.9
 // =====================================================================
 // Single script for sender, receiver, both, or local roles.
 // Configure via Custom Data on the Programmable Block.
@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.8";
+private const string VERSION         = "1.9";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -21,6 +21,9 @@ private const int    DEFAULT_MAX_MESSAGES      = 20;
 private const int    DEFAULT_RETRY_SECONDS     = 30;
 private const int    DEFAULT_MAX_RETRIES       = 0;
 private const int    DEFAULT_CAROUSEL_SECONDS  = 5;
+private const string DEFAULT_BC_TAG     = "[HERMES_BC]";
+private const bool   DEFAULT_BC_ENABLED = true;
+private const int    DEFAULT_BC_INDEX   = 8;
 
 // -------------------------------------------------------------------------
 // Alert shortcode table
@@ -74,6 +77,9 @@ private int        _retrySeconds     = DEFAULT_RETRY_SECONDS;
 private int        _maxRetries       = DEFAULT_MAX_RETRIES;
 private bool       _carouselMode     = false;
 private int        _carouselSeconds  = DEFAULT_CAROUSEL_SECONDS;
+private string     _bcTag            = DEFAULT_BC_TAG;
+private bool       _bcEnabled        = DEFAULT_BC_ENABLED;
+private int        _bcIndex          = DEFAULT_BC_INDEX;
 
 // -------------------------------------------------------------------------
 // Runtime state
@@ -85,10 +91,20 @@ private bool                 _pendingAntennaOff = false;
 private readonly List<IMyTerminalBlock>  _lcdBuffer     = new List<IMyTerminalBlock>();
 private readonly List<IMyLightingBlock>  _alertLights   = new List<IMyLightingBlock>();
 private readonly List<IMySoundBlock>     _alertSounds   = new List<IMySoundBlock>();
-private readonly List<IMyRadioAntenna>   _antennaBuffer = new List<IMyRadioAntenna>();
+private readonly List<IMyRadioAntenna>          _antennaBuffer = new List<IMyRadioAntenna>();
+private IMyBroadcastController                  _broadcastController;
+private readonly List<IMyBroadcastController>   _bcBuffer = new List<IMyBroadcastController>();
 private readonly List<ReceivedMessage>   _messages      = new List<ReceivedMessage>();
 private readonly List<QueuedMessage>     _queue         = new List<QueuedMessage>();
 private readonly StringBuilder           _sb            = new StringBuilder();
+
+private readonly Color H_BG     = new Color(  3,  5, 10);
+private readonly Color H_PANEL  = new Color(  6, 10, 18);
+private readonly Color H_BORDER = new Color( 25, 60, 90);
+private readonly Color H_HEAD   = new Color(120, 200, 255);
+private readonly Color H_TEXT   = new Color(200, 230, 255);
+private readonly Color H_DIM    = new Color( 70, 110, 145);
+private readonly Color H_ACCENT = new Color( 40, 100, 160);
 
 private int  _carouselIndex      = 0;
 private long _carouselLastChange = 0;
@@ -103,6 +119,8 @@ public Program()
 
     if (_mode != ScriptMode.Local)
         InitAntenna();
+
+    InitBroadcastController();
 
     bool needsTick = (_mode != ScriptMode.Sender) || _ackEnabled;
     if (needsTick)
@@ -307,6 +325,8 @@ private void InjectLocal(string text)
     while (_messages.Count > _maxMessages)
         _messages.RemoveAt(_messages.Count - 1);
 
+    Broadcast(message);
+
     if (_carouselMode) { _carouselIndex = 0; _carouselLastChange = DateTime.Now.Ticks; }
     RefreshLcds();
     RefreshAlertBlocks(true);
@@ -432,6 +452,8 @@ private void PollBroadcast()
         while (_messages.Count > _maxMessages)
             _messages.RemoveAt(_messages.Count - 1);
 
+        Broadcast(text);
+
         if (_ackEnabled && hasAddr)
             IGC.SendUnicastMessage(senderAddr, ACK_TAG, raw);
     }
@@ -514,6 +536,48 @@ private bool TryHandleClear(string argument)
 }
 
 // =========================================================================
+// Display — sprite helpers
+// =========================================================================
+private RectangleF VP(IMyTextSurface s)
+{
+    return new RectangleF((s.TextureSize - s.SurfaceSize) * 0.5f, s.SurfaceSize);
+}
+
+private RectangleF Inset(RectangleF r, float a)
+{
+    return new RectangleF(r.X + a, r.Y + a, r.Width - a * 2f, r.Height - a * 2f);
+}
+
+private void Fill(MySpriteDrawFrame fr, RectangleF r, Color c)
+{
+    fr.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+        r.Position + r.Size * 0.5f, r.Size, c));
+}
+
+private void DrawBorder(MySpriteDrawFrame fr, RectangleF r, Color c, float t)
+{
+    Fill(fr, new RectangleF(r.X,         r.Y,          r.Width, t), c);
+    Fill(fr, new RectangleF(r.X,         r.Bottom - t, r.Width, t), c);
+    Fill(fr, new RectangleF(r.X,         r.Y,          t, r.Height), c);
+    Fill(fr, new RectangleF(r.Right - t, r.Y,          t, r.Height), c);
+}
+
+private void Txt(MySpriteDrawFrame fr, string text, float x, float y,
+    Color c, float sc, TextAlignment al)
+{
+    fr.Add(new MySprite(SpriteType.TEXT, text ?? "",
+        new Vector2(x, y), null, c, "Monospace", al, sc));
+}
+
+private void ConfigureSurface(IMyTextSurface s)
+{
+    s.ContentType           = ContentType.SCRIPT;
+    s.Script                = "";
+    s.BackgroundColor       = H_BG;
+    s.ScriptBackgroundColor = H_BG;
+}
+
+// =========================================================================
 // Display — dispatch LCD
 // =========================================================================
 private void RefreshLcds()
@@ -533,187 +597,117 @@ private void RefreshLcds()
         if (idx >= provider.SurfaceCount) continue;
 
         var surface = provider.GetSurface(idx);
-        surface.ContentType = ContentType.TEXT_AND_IMAGE;
-        surface.Font        = "Monospace";
-        surface.WriteText(_carouselMode
-            ? BuildCarouselContent(surface)
-            : BuildDispatchContent(surface));
+        ConfigureSurface(surface);
+
+        if (_carouselMode)
+            DrawCarousel(surface);
+        else
+            DrawDispatch(surface);
     }
 }
 
-private string BuildDispatchContent(IMyTextSurface surface)
+private void DrawDispatch(IMyTextSurface s)
 {
-    int    width = EstimateCharsPerLine(surface);
-    string bar   = new string('═', width);
+    var   vp  = VP(s);
+    var   pan = Inset(vp, 8f);
+    float cx  = vp.X + vp.Width * 0.5f;
+    float pw  = pan.Width;
+    float ph  = pan.Height;
 
-    _sb.Clear();
-    _sb.AppendLine(" HERMES DISPATCH");
-    _sb.AppendLine(" " + DateTime.Now.ToString("yyyy-MM-dd  HH:mm"));
-    _sb.AppendLine(bar);
+    // Measure base char at scale 1 to derive working scales from actual surface size
+    _sb.Clear(); _sb.Append('W');
+    var   base1  = s.MeasureStringInPixels(_sb, "Monospace", 1.0f);
+    float baseH  = base1.Y > 0 ? base1.Y : 28f;
+    float baseW  = base1.X > 0 ? base1.X : 15f;
 
-    if (_messages.Count == 0)
+    float headScale = Math.Max(0.25f, Math.Min(0.9f,  ph * 0.13f / baseH));
+    float bodyScale = Math.Max(0.20f, Math.Min(0.65f, ph * 0.085f / baseH));
+
+    float cw       = baseW  * bodyScale;
+    float rowH     = baseH  * bodyScale + 3f;
+    int   maxChars = Math.Max(8, (int)((pw - 20f) / cw));
+
+    float headH = baseH * headScale + 18f;
+    float footH = baseH * bodyScale * 0.7f + 12f;
+    float divY1 = pan.Y    + headH;
+    float divY2 = pan.Bottom - footH;
+
+    using (var fr = s.DrawFrame())
     {
-        _sb.AppendLine("  No alerts — all clear.");
-    }
-    else
-    {
-        for (int i = 0; i < _messages.Count; i++)
+        Fill(fr, vp, H_BG);
+        Fill(fr, pan, H_PANEL);
+        DrawBorder(fr, pan, H_BORDER, 2f);
+
+        Txt(fr, "HERMES DISPATCH", pan.X + 12f, pan.Y + 6f,  H_HEAD, headScale, TextAlignment.LEFT);
+        Txt(fr, DateTime.Now.ToString("HH:mm"), pan.Right - 12f, pan.Y + 8f, H_DIM, bodyScale, TextAlignment.RIGHT);
+
+        Fill(fr, new RectangleF(pan.X + 6f, divY1, pw - 12f, 2f), H_TEXT);
+        Fill(fr, new RectangleF(pan.X + 6f, divY2, pw - 12f, 2f), H_TEXT);
+
+        Txt(fr, "Intergrid Messaging  v" + VERSION, cx, divY2 + 3f, H_DIM, bodyScale * 0.6f, TextAlignment.CENTER);
+
+        float dy = divY1 + 6f;
+
+        if (_messages.Count == 0)
         {
-            var    m    = _messages[i];
-            string num  = (i + 1).ToString();
-            string name = m.GridName.Length > 14
-                ? m.GridName.Substring(0, 11) + "..."
-                : m.GridName;
-
-            // Full prefix is 31 chars — use it only when the LCD is wide enough
-            string prefix = " #" + num.PadLeft(2) + "  [" + m.Timestamp + "]  "
-                + name.PadRight(14) + "  ";
-
-            if (width - prefix.Length >= 4)
+            Txt(fr, "No messages — all clear.", cx, dy + rowH, H_DIM, bodyScale, TextAlignment.CENTER);
+        }
+        else
+        {
+            for (int i = 0; i < _messages.Count; i++)
             {
-                AppendWrapped(prefix, m.Text, width);
-            }
-            else
-            {
-                // Narrow LCD: compact header on line 1, text word-wrapped below
-                string header = "#" + num + " [" + m.Timestamp + "] " + m.GridName;
-                if (header.Length > width)
-                    header = header.Substring(0, width);
-                _sb.AppendLine(header);
-                AppendWrapped("  ", m.Text, width);
+                if (dy + rowH * 2f + 2f > divY2 - 4f) break;
+
+                var    m   = _messages[i];
+                string hdr = "#" + (i + 1) + "  [" + m.Timestamp + "]  " + m.GridName;
+                string txt = m.Text;
+                if (hdr.Length > maxChars) hdr = hdr.Substring(0, maxChars - 1) + "~";
+                if (txt.Length > maxChars) txt = txt.Substring(0, maxChars - 1) + "~";
+
+                Txt(fr, hdr,         pan.X + 12f, dy,        H_DIM,  bodyScale, TextAlignment.LEFT);
+                Txt(fr, "  " + txt,  pan.X + 12f, dy + rowH, H_TEXT, bodyScale, TextAlignment.LEFT);
+                dy += rowH * 2f + 4f;
             }
         }
     }
-
-    _sb.AppendLine(bar);
-    return _sb.ToString();
 }
 
-private string BuildCarouselContent(IMyTextSurface surface)
+private void DrawCarousel(IMyTextSurface s)
 {
-    int    width      = EstimateCharsPerLine(surface);
-    int    totalLines = EstimateLinesPerScreen(surface);
-    string bar        = new string('─', width);
+    if (_messages.Count == 0) { DrawDispatch(s); return; }
+    if (_carouselIndex >= _messages.Count) _carouselIndex = 0;
 
-    if (_carouselIndex >= _messages.Count)
-        _carouselIndex = 0;
+    var   vp  = VP(s);
+    var   pan = Inset(vp, 8f);
+    float cx  = vp.X + vp.Width  * 0.5f;
+    float ph  = pan.Height;
+    float mid = pan.Y + ph * 0.5f;
 
-    _sb.Clear();
+    _sb.Clear(); _sb.Append('W');
+    var   base1    = s.MeasureStringInPixels(_sb, "Monospace", 1.0f);
+    float baseH    = base1.Y > 0 ? base1.Y : 28f;
+    float msgScale = Math.Max(0.3f, Math.Min(0.9f,  ph * 0.15f / baseH));
+    float metScale = Math.Max(0.2f, Math.Min(0.55f, ph * 0.075f / baseH));
 
-    if (_messages.Count == 0)
-        return "";
+    float msgH  = baseH * msgScale;
+    float divGap = msgH * 0.6f;
 
     var    m       = _messages[_carouselIndex];
-    string counter = (_carouselIndex + 1) + "/" + _messages.Count;
-    string suffix  = "  •  " + counter + "  •  " + m.Timestamp;
-    int    nameMax = width - 1 - suffix.Length;
-    string name    = nameMax > 0
-        ? m.GridName.Substring(0, Math.Min(m.GridName.Length, nameMax))
-        : "";
+    string counter = (_carouselIndex + 1) + " / " + _messages.Count;
 
-    int msgLines    = CountWrappedLines(" ", m.Text, width);
-    int blockLines  = 1 + 2 + msgLines + 2 + 1;   // bar + 2×blank + msg + 2×blank + bar
-    int available   = totalLines - 1;               // last line reserved for status
-    int topPad2     = Math.Max(0, (available - blockLines) / 2);
-    int bottomPad   = Math.Max(0, available - blockLines - topPad2);
-
-    for (int i = 0; i < topPad2; i++)  _sb.AppendLine("");
-    _sb.AppendLine(bar);
-    _sb.AppendLine(""); _sb.AppendLine("");
-    AppendWrapped(" ", m.Text, width);
-    _sb.AppendLine(""); _sb.AppendLine("");
-    _sb.AppendLine(bar);
-    for (int i = 0; i < bottomPad; i++) _sb.AppendLine("");
-    _sb.AppendLine(" " + name + suffix);
-
-    return _sb.ToString();
-}
-
-private int EstimateCharsPerLine(IMyTextSurface surface)
-{
-    _sb.Clear();
-    _sb.Append('W');
-    float charW = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).X;
-    if (charW <= 0f) return 50;
-    return Math.Max(10, (int)(surface.SurfaceSize.X / charW));
-}
-
-private int EstimateLinesPerScreen(IMyTextSurface surface)
-{
-    _sb.Clear();
-    _sb.Append('W');
-    float charH = surface.MeasureStringInPixels(_sb, surface.Font, surface.FontSize).Y;
-    if (charH <= 0f) return 20;
-    // SE's line spacing is slightly larger than the character height — subtract 1 to stay on screen
-    return Math.Max(3, (int)(surface.SurfaceSize.Y / charH) - 1);
-}
-
-private int CountWrappedLines(string prefix, string text, int lineWidth)
-{
-    int availFirst = lineWidth - prefix.Length;
-    if (text.Length == 0) return 1;
-
-    string continuation = new string(' ', prefix.Length);
-    int    lines   = 0;
-    bool   isFirst = true;
-    string cur     = "";
-
-    foreach (string word in text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+    using (var fr = s.DrawFrame())
     {
-        int avail = isFirst ? availFirst : (lineWidth - continuation.Length);
-        if (cur.Length == 0)
-            cur = word;
-        else if (cur.Length + 1 + word.Length <= avail)
-            cur += " " + word;
-        else
-        {
-            lines++;
-            isFirst = false;
-            cur     = word;
-        }
+        Fill(fr, vp, H_BG);
+        Fill(fr, pan, H_PANEL);
+        DrawBorder(fr, pan, H_BORDER, 2f);
+
+        Fill(fr, new RectangleF(pan.X + 6f, mid - divGap - msgH * 0.1f, pan.Width - 12f, 2f), H_TEXT);
+        Txt(fr, m.Text, cx, mid - divGap + 2f, H_TEXT, msgScale, TextAlignment.CENTER);
+        Fill(fr, new RectangleF(pan.X + 6f, mid + divGap + msgH * 0.8f, pan.Width - 12f, 2f), H_TEXT);
+
+        Txt(fr, m.GridName + "  •  " + m.Timestamp + "  •  " + counter,
+            cx, mid + divGap + msgH * 0.9f + 4f, H_DIM, metScale, TextAlignment.CENTER);
     }
-    if (cur.Length > 0) lines++;
-
-    return lines;
-}
-
-private void AppendWrapped(string prefix, string text, int lineWidth)
-{
-    int availFirst = lineWidth - prefix.Length;
-
-    if (text.Length <= availFirst)
-    {
-        _sb.AppendLine(prefix + text);
-        return;
-    }
-
-    // Word-wrap: fill the first line then continuation lines indented to prefix width
-    string continuation = new string(' ', prefix.Length);
-    bool   isFirst      = true;
-    string cur          = "";
-
-    foreach (string word in text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
-    {
-        int avail = isFirst ? availFirst : (lineWidth - continuation.Length);
-
-        if (cur.Length == 0)
-        {
-            cur = word;
-        }
-        else if (cur.Length + 1 + word.Length <= avail)
-        {
-            cur += " " + word;
-        }
-        else
-        {
-            _sb.AppendLine((isFirst ? prefix : continuation) + cur);
-            isFirst = false;
-            cur     = word;
-        }
-    }
-
-    if (cur.Length > 0)
-        _sb.AppendLine((isFirst ? prefix : continuation) + cur);
 }
 
 private void RefreshAlertBlocks(bool newMessageArrived)
@@ -794,6 +788,26 @@ private string ModeLabel()
 }
 
 // =========================================================================
+// Broadcast controller
+// =========================================================================
+private void InitBroadcastController()
+{
+    _bcBuffer.Clear();
+    GridTerminalSystem.GetBlocksOfType<IMyBroadcastController>(_bcBuffer,
+        b => b.IsSameConstructAs(Me) && b.CustomName.Contains(_bcTag));
+    _broadcastController = _bcBuffer.Count > 0 ? _bcBuffer[0] : null;
+}
+
+private void Broadcast(string message)
+{
+    if (!_bcEnabled || _broadcastController == null || string.IsNullOrEmpty(message)) return;
+    _sb.Clear();
+    _sb.Append(message);
+    _broadcastController.SetValue<StringBuilder>("Message" + (_bcIndex - 1), _sb);
+    _broadcastController.ApplyAction("Transmit Message " + _bcIndex);
+}
+
+// =========================================================================
 // Antenna management
 // =========================================================================
 private void InitAntenna()
@@ -829,8 +843,7 @@ private void EnsureAntennaOn()
 // =========================================================================
 private void LoadConfig()
 {
-    string raw = Me.CustomData;
-    if (string.IsNullOrEmpty(raw)) return;
+    string raw = Me.CustomData ?? "";
 
     string[] lines = raw.Split(new char[] { '\r', '\n' },
         StringSplitOptions.RemoveEmptyEntries);
@@ -860,8 +873,7 @@ private void LoadConfig()
                     case "both":     _mode = ScriptMode.Both;     break;
                     case "local":    _mode = ScriptMode.Local;    break;
                     default:
-                        Echo("WARNING: Unknown mode '" + value
-                            + "' — defaulting to receiver.");
+                        Echo("WARNING: Unknown mode '" + value + "' — defaulting to receiver.");
                         break;
                 }
                 break;
@@ -908,8 +920,60 @@ private void LoadConfig()
                 if (int.TryParse(value, out cs) && cs > 0)
                     _carouselSeconds = cs;
                 break;
+            case "bc_tag":
+                if (!string.IsNullOrEmpty(value)) _bcTag = value;
+                break;
+            case "bc_enabled":
+            {
+                string lv = value.ToLowerInvariant();
+                _bcEnabled = lv == "true" || lv == "1" || lv == "yes";
+                break;
+            }
+            case "bc_index":
+                int bcIdx;
+                if (int.TryParse(value, out bcIdx) && bcIdx >= 1 && bcIdx <= 8)
+                    _bcIndex = bcIdx;
+                break;
         }
     }
+
+    WriteDefaults(raw);
+}
+
+private void WriteDefaults(string raw)
+{
+    var sb = new StringBuilder();
+    bool dirty = false;
+
+    if (!HasKey(raw, "mode"))                 { sb.AppendLine("mode = receiver");                             dirty = true; }
+    if (!HasKey(raw, "channel"))              { sb.AppendLine("channel = " + DEFAULT_CHANNEL);                dirty = true; }
+    if (!HasKey(raw, "lcd_tag"))              { sb.AppendLine("lcd_tag = " + DEFAULT_LCD_TAG);                dirty = true; }
+    if (!HasKey(raw, "lcd_surface"))          { sb.AppendLine("lcd_surface = 0");                             dirty = true; }
+    if (!HasKey(raw, "max_messages"))         { sb.AppendLine("max_messages = " + DEFAULT_MAX_MESSAGES);      dirty = true; }
+    if (!HasKey(raw, "ack"))                  { sb.AppendLine("ack = false");                                 dirty = true; }
+    if (!HasKey(raw, "retry_seconds"))        { sb.AppendLine("retry_seconds = " + DEFAULT_RETRY_SECONDS);    dirty = true; }
+    if (!HasKey(raw, "max_retries"))          { sb.AppendLine("max_retries = " + DEFAULT_MAX_RETRIES);        dirty = true; }
+    if (!HasKey(raw, "lcd_mode"))             { sb.AppendLine("lcd_mode = dispatch");                         dirty = true; }
+    if (!HasKey(raw, "lcd_carousel_seconds")) { sb.AppendLine("lcd_carousel_seconds = " + DEFAULT_CAROUSEL_SECONDS); dirty = true; }
+    if (!HasKey(raw, "bc_tag"))               { sb.AppendLine("bc_tag = " + DEFAULT_BC_TAG);                  dirty = true; }
+    if (!HasKey(raw, "bc_enabled"))           { sb.AppendLine("bc_enabled = true");                           dirty = true; }
+    if (!HasKey(raw, "bc_index"))             { sb.AppendLine("bc_index = " + DEFAULT_BC_INDEX);              dirty = true; }
+
+    if (dirty)
+        Me.CustomData = raw.TrimEnd() + (raw.Length > 0 ? "\n" : "") + sb.ToString();
+}
+
+private bool HasKey(string raw, string key)
+{
+    string keyLower = key.ToLowerInvariant();
+    foreach (var line in raw.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+    {
+        string t = line.Trim().ToLowerInvariant();
+        if (t.StartsWith(";") || t.StartsWith("//")) continue;
+        if (t.StartsWith(keyLower + "=") || t.StartsWith(keyLower + " ="))
+            return true;
+    }
+    return false;
 }
 
 private bool TrySplitKeyValue(string line, char sep, out string key, out string value)

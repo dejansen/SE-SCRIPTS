@@ -1,8 +1,8 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.8** — ⚠️ TESTING PHASE — Not yet verified in-game. Expect bugs.
+**Version 1.9**
 
-A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a large LCD dispatch board.
+A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a sprite-rendered LCD dispatch board.
 
 ---
 
@@ -22,13 +22,16 @@ One script, two roles. No extra files.
 - **Preprogrammed shortcodes** — type `HYDROGEN_LOW` and it broadcasts "Hydrogen tanks critically low"
 - **Freeform messages** — any text not matching a shortcode is sent as-is
 - **Antenna auto-management** — receiver keeps antenna on; sender turns it on to transmit and off again
-- **Timestamped dispatch board** — LCD shows all alerts with time received, newest first
+- **Sprite-based dispatch board** — LCD renders with background, panel, dividers, and adaptive font sizing that works on any LCD type
+- **Adaptive layout** — measures the actual surface pixel dimensions and scales font and layout to fit any LCD panel size
 - **Per-message channel override** — prefix any argument with `@channel:` to route it to a different channel without changing config
 - **Persistent log** — messages survive PB reboots via `Storage`
+- **Auto-populate config** — missing Custom Data keys are written with defaults on first run
 - **CLEAR commands** — dismiss one alert or all at once
 - **Optional ACK mode** — sender retries until receiver confirms delivery
 - **Alert light** — any lighting block with the tag in its name turns on while there are unread messages, off on CLEAR
 - **Alert sound** — any sound block with the tag in its name plays once when a new message arrives
+- **Broadcast Controller** — optionally announces incoming messages through a tagged Broadcast Controller block
 
 ---
 
@@ -86,6 +89,28 @@ Messages posted via run arguments appear on the tagged LCDs immediately. Alert l
 
 ---
 
+## Broadcast Controller (optional)
+
+When a new message arrives, Hermes can announce it through a **Broadcast Controller** block — the in-game block that lets you play pre-programmed voice lines or display scrolling text.
+
+**Setup:**
+
+1. Place a **Broadcast Controller** on the same grid as the receiver PB.
+2. Include `[HERMES_BC]` in the block's name (or change the tag in Custom Data).
+3. In the Broadcast Controller's settings, pre-program the message slot you want Hermes to use (default: slot 8).
+
+The script writes the incoming message text to the configured slot and triggers it automatically. No extra wiring needed.
+
+**Config keys:**
+
+```
+bc_tag     = [HERMES_BC]   ; name tag to find the Broadcast Controller block
+bc_enabled = true           ; set to false to disable without removing the block
+bc_index   = 8              ; which message slot to use (1–8)
+```
+
+---
+
 ## Alert Light and Sound Block
 
 Place any lighting block or sound block on the same construct as the receiver PB and include the `lcd_tag` value in its name.
@@ -110,7 +135,7 @@ Multiple lights and sound blocks with the tag are all triggered simultaneously.
 
 ## Naming the Dispatch LCD
 
-The script finds any block with your `lcd_tag` value in its name that has an LCD surface — this includes standalone LCD panels, cockpits, control stations, and corner LCDs.
+The script finds any block with your `lcd_tag` value in its name that has an LCD surface — this includes standalone LCD panels, cockpits, control stations, corner LCDs, and transparent LCDs.
 
 **Rules:**
 - The tag is **case-sensitive**. `[HERMES]` and `[hermes]` are different.
@@ -118,6 +143,8 @@ The script finds any block with your `lcd_tag` value in its name that has an LCD
 - Multiple tagged blocks all show the same content.
 - For standalone LCD panels, surface index is always 0.
 - For cockpits and control stations, use `lcd_surface` to pick which screen (0-based).
+
+The script sets `ContentType = SCRIPT` on the surface automatically and adjusts font scale and layout to the actual pixel dimensions of the surface — no manual font or size setting needed.
 
 **Valid name examples** (default tag `[HERMES]`):
 ```
@@ -128,12 +155,7 @@ Alerts [HERMES] Panel
 My Cockpit [HERMES]        ← cockpit, shows on the surface set by lcd_surface
 ```
 
-**Invalid** (wrong tag, wrong case):
-```
-[hermes] Dispatch     ← lowercase, won't match
-HERMES Board          ← no brackets, won't match
-[HERMES_BOARD]        ← extra characters inside brackets
-```
+---
 
 ### Using a cockpit or control station LCD
 
@@ -175,8 +197,6 @@ Event Controllers cannot run PBs directly. Use a **Timer Block** as the bridge:
 
 The `@channel:` prefix is optional and per-message. The configured `channel` in Custom Data remains the default for all messages without a prefix. Shortcodes work normally after the `:`.
 
-This lets one sender PB reach multiple receivers on different channels — for example, town-wide alerts on `HERMES` and direct messages to a player's ship on `[PLAYERA]` — all from the same Timer Block setup, just with different arguments per event.
-
 ### Shortcode reference
 
 | Argument | Broadcast text |
@@ -205,14 +225,14 @@ A grid that is always online (e.g. an airport control tower) can act as a relay:
 **How to wire it:**
 
 1. Configure the relay PB with `mode = both` and `channel = [PLAYERA]`.
-2. Buildings send player-addressed messages using `@[PLAYERA]:HYDROGEN_LOW`.  
+2. Buildings send player-addressed messages using `@[PLAYERA]:HYDROGEN_LOW`.
    The relay receives and stores them like a normal receiver.
 3. Place a **Sensor Block** or use a **Connector** event on the landing pad to detect arrival.
 4. Wire the arrival event to a **Timer Block** → **Run** the relay PB with argument `FORWARD`.
-5. `FORWARD` re-broadcasts all stored messages on `[PLAYERA]`.  
+5. `FORWARD` re-broadcasts all stored messages on `[PLAYERA]`.
    Player A's ship receiver (also on `[PLAYERA]`) picks them up.
 
-**With `ack = true` on the relay:**  
+**With `ack = true` on the relay:**
 `FORWARD` enqueues the messages instead of fire-and-forget. The relay's retry loop keeps re-broadcasting every `retry_seconds` until Player A's receiver ACKs. Useful if their PB is slow to come online after landing.
 
 **The relay's own dispatch LCD** still shows what's queued — so the tower operator can see pending messages before the player arrives.
@@ -237,27 +257,29 @@ The number matches the `#N` shown on the dispatch board. After clearing, the boa
 
 ## Custom Data — Full Reference
 
-```
-; HERMES Configuration
-; Lines starting with ; are comments and are ignored.
+All keys are written automatically with their defaults on first run. You only need to set the values you want to change.
 
+```
 mode                 = receiver    ; sender | receiver | both | local
 channel              = HERMES      ; Must match on all senders and the receiver
 lcd_tag              = [HERMES]    ; Any LCD/cockpit screen with this in its name shows the dispatch board
 lcd_surface          = 0           ; Surface index for cockpits/control stations (0 = first screen)
-lcd_mode             = list        ; list = all messages at once | carousel = one at a time, cycling
+lcd_mode             = dispatch    ; dispatch = all messages | carousel = one at a time, cycling
 lcd_carousel_seconds = 5           ; Seconds each message is shown before advancing (carousel only)
 max_messages         = 20          ; How many alerts to keep (oldest are dropped)
 ack                  = false       ; true = enable delivery confirmation + retry queue
 retry_seconds        = 30          ; Seconds between retransmission attempts (ack mode only)
 max_retries          = 0           ; Max retries before dropping (0 = retry forever)
+bc_tag               = [HERMES_BC] ; Name tag to find the Broadcast Controller block
+bc_enabled           = true        ; Set to false to disable broadcast announcements
+bc_index             = 8           ; Message slot used on the Broadcast Controller (1–8)
 ```
 
 ### `mode`
 - `sender` — responds to run arguments only; no polling loop
 - `receiver` — polls IGC and updates the LCD; handles CLEAR commands
 - `both` — same PB acts as sender and receiver (e.g. a relay building)
-- `local` — no antenna or IGC at all; run arguments are posted directly to the on-grid LCD board; useful for a self-contained status board on one building
+- `local` — no antenna or IGC at all; run arguments are posted directly to the on-grid LCD board
 
 ### `ack` — delivery confirmation (optional)
 
@@ -267,47 +289,42 @@ When `ack = true`:
 - Once confirmed, the message is removed from the retry queue.
 - The queue survives PB reboots via `Storage`.
 
-This is useful when buildings or the control room may be unloaded or offline. With `ack = false` (default), a message sent while the receiver is off is lost.
-
 ---
 
-## `lcd_mode` — List vs Carousel
+## `lcd_mode` — Dispatch vs Carousel
 
 | Value | Behaviour |
 |---|---|
-| `list` (default) | All stored messages displayed at once, newest first. Same layout as previous versions. |
+| `dispatch` (default) | All stored messages displayed at once, newest first. |
 | `carousel` | One message fills the screen. Cycles to the next every `lcd_carousel_seconds` seconds. Resets to the newest message whenever a new alert arrives. |
-
-Carousel is useful when you want a large, readable display for a single alert rather than a scrolling log. The grid name and message text each get their own section with full word-wrap across the LCD width.
 
 ---
 
 ## Dispatch Board Layout
 
+The dispatch board is rendered as sprites and adapts its font size and spacing to whatever LCD panel it is on — wide, narrow, tall, or square. No manual font configuration required.
+
+**Dispatch mode:**
 ```
- HERMES DISPATCH
- 2026-05-19  14:32
-══════════════════════════════════════════════════
- # 1  [14:32]  Hydro Plant      Hydrogen tanks critically low
- # 2  [14:15]  Power Station    Battery power critically low
- # 3  [09:44]  Refinery         Ice supply low
-══════════════════════════════════════════════════
-```
-
-**Carousel layout** (`lcd_mode = carousel`):
-
-```
-──────────────────────────────────────────────────
-
-
- Hydrogen tanks critically low
-
-
-──────────────────────────────────────────────────
- Hydro Plant  •  1/3  •  14:32
+HERMES DISPATCH                    HH:mm
+────────────────────────────────────────
+#1  [HH:mm]  GridName
+  Message text
+#2  [HH:mm]  GridName
+  Message text
+────────────────────────────────────────
+         Intergrid Messaging  v1.9
 ```
 
-Set the LCD to **Monospace** font for proper column alignment. The script sets `ContentType = TEXT_AND_IMAGE` automatically; it does not change your font size setting.
+**Carousel mode** (`lcd_mode = carousel`):
+```
+────────────────────────────────────────
+
+  Message text
+
+────────────────────────────────────────
+GridName  •  HH:mm  •  1 / 3
+```
 
 ---
 
@@ -320,7 +337,7 @@ The small LCD on the Programmable Block's face shows live status:
    * H E R M E S *
 ══════════════════
  Intergrid Comms
-      v1.0
+      v1.9
 ══════════════════
 Mode: RECEIVER
 Chan: HERMES
@@ -334,7 +351,7 @@ Msgs: 3 / 20
 
 | Issue | Notes |
 |---|---|
-| **Two PBs on the same grid (sender + receiver)** | If a building runs a dedicated sender PB and a dedicated receiver PB, the receiver will log the sender's own broadcasts. The self-filter (`msg.Source == IGC.Me`) only works when both roles are on the same PB (`mode = both`). Fix: use `mode = both` on one PB, or embed the sender's grid EntityId in the payload so receivers can filter by grid. Not yet implemented. |
+| **Two PBs on the same grid (sender + receiver)** | If a building runs a dedicated sender PB and a dedicated receiver PB, the receiver will log the sender's own broadcasts. The self-filter (`msg.Source == IGC.Me`) only works when both roles are on the same PB (`mode = both`). Fix: use `mode = both` on one PB. |
 | **Sender grid unloaded** | If nobody is near the sending building, the retry queue pauses. Messages resume when the grid loads again. |
 | **Storage cleared on recompile** | SE clears `Storage` when a script is recompiled from the editor. Messages and queues are lost. This is an SE limitation. |
 
@@ -353,3 +370,4 @@ Msgs: 3 / 20
 | Shortcode not expanding | Check spelling; shortcodes are case-insensitive but must match exactly (no extra spaces) |
 | Messages lost when PB recompiled | Normal — Storage is cleared on recompile. This is an SE limitation. |
 | CLEAR N does nothing | Index must be between 1 and the number shown on the board |
+| Broadcast Controller silent | Check block name contains `bc_tag`, slot is pre-programmed, and `bc_enabled = true` |
