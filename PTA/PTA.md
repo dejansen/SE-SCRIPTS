@@ -1,6 +1,6 @@
-# PTA — Planetary Travel Assistant `v1.9`
+# PTA — Planetary Travel Assistant `v2.0`
 
-Autopilot assistant for planetary flight, orbit transitions, and autonomous connector docking. Features are enabled independently via hotbar commands. Live status is shown on any tagged LCD, cockpit screen, or the PB's own screen.
+Autopilot assistant for planetary flight, orbit transitions, and autonomous connector docking. Features are enabled independently via hotbar commands. Live status is shown on any tagged LCD, cockpit screen, or the PB's own screen. Optional Broadcast Controller support for audio announcements when away from the cockpit.
 
 ---
 
@@ -13,6 +13,7 @@ Autopilot assistant for planetary flight, orbit transitions, and autonomous conn
 - **Descend mode** — gravity-powered free-fall from orbit or high altitude. Keeps ship level; auto-completes at the configured target altitude. Only available in planetary gravity.
 - **Autodock** — teach-and-replay connector docking. Save a dock target while physically connected (`SAVE <name>`), then fly to approach distance and run `DOCK <name>` to dock autonomously. Works in space and on planets, for any connector orientation.
 - **Display** — animated boot screen, live status panel with colour-coded state, dedicated screens for ASCEND, DESCEND, DOCK, and CONNECTED states.
+- **Broadcast announcements** — optional Broadcast Controller support. Tag one controller `[PTA_BC]` and PTA will announce mode changes (cruise, ascend, descend, dock, on/off) over ship comms. Message text and slot index are fully configurable via Custom Data.
 
 ---
 
@@ -229,6 +230,15 @@ The PB's own screen always shows output. To add more screens:
 - **LCD panel** — add `[PTA]` anywhere in the block name (e.g. `LCD Panel [PTA]`)
 - **Cockpit screen** — add `[PTA]` to the cockpit name, then set `cockpit_screen` in Custom Data to the screen index (0, 1, 2…)
 
+### Broadcast Controller setup (optional)
+
+Add `[PTA_BC]` anywhere in the name of one Broadcast Controller. On first `PTA_ON` the `[broadcast]` section is written to Custom Data with default messages and slot index 8. PTA writes the message text to that slot before transmitting — your other slots (1–7) are untouched.
+
+To customise:
+- Edit message strings directly in Custom Data
+- Change `index` to any slot 1–8
+- Set `enabled = false` to silence all announcements without removing the block tag
+
 ---
 
 ## Themes
@@ -297,6 +307,23 @@ waypoint_distance  = 15   ; metres in front of target for approach waypoint
 [display]
 cockpit_screen = 0      ; cockpit screen index to use (0-based)
 theme = cyber           ; colour theme: cyber, amber, matrix, heat, royal
+
+[broadcast]
+enabled         = true   ; set false to silence all announcements
+index           = 8      ; broadcast controller slot to use (1-8); slots 1-7 are yours
+pta_on          = Planetary Travel Assistant online
+pta_off         = Planetary Travel Assistant offline
+cruise_on       = Cruise activated
+cruise_off      = Cruise off
+ascend_on       = Ascending to orbit
+ascend_complete = Orbit reached
+ascend_abort    = Ascend aborted
+descend_on      = Descending
+descend_complete= Descent complete
+descend_abort   = Descend aborted
+dock_start      = Initiating docking
+dock_complete   = Docking complete
+dock_abort      = Docking aborted
 ```
 
 Saved dock targets are stored as `[dock:name]` sections and are written by the `SAVE` command — do not edit them manually.

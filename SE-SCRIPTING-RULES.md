@@ -257,6 +257,30 @@ Both `Main(string argument, UpdateType updateSource)` and `Main(string argument)
   ```
 - `StartCountdown()` starts the timer's countdown (same as the "Start" toolbar action)
 
+### IMyBroadcastController
+- Exists in the whitelist (`SpaceEngineers.Game.ModAPI.Ingame`); cast from `GridTerminalSystem.GetBlocksOfType<IMyBroadcastController>(...)`
+- **Has no own scripting members.** The interface is entirely inherited from `IMyFunctionalBlock` / `IMyTerminalBlock`.
+- Block types: `MyObjectBuilder_BroadcastController/LargeBlockBroadcastController` and `.../SmallBlockBroadcastController`
+- Supports up to **8 messages**, zero-indexed as properties, one-indexed in actions:
+
+| What | How | Notes |
+|---|---|---|
+| Read message text | `GetProperty("Message0").As<StringBuilder>().GetValue(bc)` | Index 0–7 |
+| Write message text | `GetProperty("Message0").As<StringBuilder>().SetValue(bc, new StringBuilder("text"))` | Index 0–7 |
+| Transmit a message | `bc.ApplyAction("Transmit Message 1")` | Index 1–8 (one-indexed!) |
+| Transmit random | `bc.ApplyAction("TransmitRandomMessage")` | |
+| Enable/disable | `bc.Enabled = true/false` | Inherited from `IMyFunctionalBlock` |
+
+- **Property vs action index offset:** `Message0` is triggered by `"Transmit Message 1"` — properties are 0-based, actions are 1-based.
+- **StringBuilder `SetValue` gotcha:** Do NOT use the property object (`GetProperty().As<StringBuilder>().SetValue()`). The sandbox type substitution causes a `MemorySafeStringBuilder` / `System.Text.StringBuilder` mismatch that can't be resolved cleanly. Use `IMyTerminalBlock.SetValue<StringBuilder>` directly with an explicit type parameter instead:
+  ```csharp
+  var sb = new StringBuilder();
+  sb.Append("text");
+  block.SetValue<StringBuilder>("Message0", sb);
+  ```
+  The explicit `<StringBuilder>` generic parameter bypasses the implicit type substitution. `MemorySafeStringBuilder` has an implicit cast to `StringBuilder` so this call succeeds. (Keen bug report: fixed in 1.207, but the direct `SetValue<StringBuilder>` pattern remains the safe approach.)
+- **Practical pattern:** user pre-configures messages in the terminal; script calls `ApplyAction("Transmit Message N")` for the appropriate event. Alternatively, the script can write message content dynamically via `SetValue` before transmitting.
+
 ### IMyEventControllerBlock
 - **Does NOT exist in the scripting whitelist.** There is no scriptable Event Controller interface.
 - If you need to trigger automation on a state change, use a **Timer Block** (`IMyTimerBlock`) and call `ApplyAction("TriggerNow")` on it.

@@ -21,13 +21,30 @@
 // Config constants
 // -------------------------------------------------------------------------
 
-private const string SEC_HORIZON  = "horizon";
-private const string SEC_ALTITUDE = "altitude";
-private const string SEC_CRUISE   = "cruise";
-private const string SEC_ASCEND   = "ascend";
-private const string SEC_DESCEND  = "descend";
-private const string SEC_DISPLAY  = "display";
-private const string SEC_DOCK     = "dock";
+private const string SEC_HORIZON   = "horizon";
+private const string SEC_ALTITUDE  = "altitude";
+private const string SEC_CRUISE    = "cruise";
+private const string SEC_ASCEND    = "ascend";
+private const string SEC_DESCEND   = "descend";
+private const string SEC_DISPLAY   = "display";
+private const string SEC_DOCK      = "dock";
+private const string SEC_BROADCAST = "broadcast";
+
+private const bool   DEFAULT_BC_ENABLED         = true;
+private const int    DEFAULT_BC_INDEX           = 8;
+private const string DEFAULT_BC_PTA_ON          = "Planetary Travel Assistant online";
+private const string DEFAULT_BC_PTA_OFF         = "Planetary Travel Assistant offline";
+private const string DEFAULT_BC_CRUISE_ON       = "Cruise activated";
+private const string DEFAULT_BC_CRUISE_OFF      = "Cruise off";
+private const string DEFAULT_BC_ASCEND_ON       = "Ascending to orbit";
+private const string DEFAULT_BC_ASCEND_COMPLETE = "Orbit reached";
+private const string DEFAULT_BC_ASCEND_ABORT    = "Ascend aborted";
+private const string DEFAULT_BC_DESCEND_ON      = "Descending";
+private const string DEFAULT_BC_DESCEND_COMPLETE= "Descent complete";
+private const string DEFAULT_BC_DESCEND_ABORT   = "Descend aborted";
+private const string DEFAULT_BC_DOCK_START      = "Initiating docking";
+private const string DEFAULT_BC_DOCK_COMPLETE   = "Docking complete";
+private const string DEFAULT_BC_DOCK_ABORT      = "Docking aborted";
 
 private const float  DEFAULT_HORIZON_CORRECTION  = 0.5f;
 private const float  DEFAULT_HORIZON_DAMPING     = 0.2f;
@@ -61,7 +78,7 @@ private const int    DEFAULT_COCKPIT_SCREEN     = 0;
 private const string DEFAULT_THEME             = "cyber";
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "1.9";
+private const string VERSION   = "2.0";
 
 // -------------------------------------------------------------------------
 // Display colors  (mutable — overwritten by ApplyTheme on config load)
@@ -109,6 +126,22 @@ private float  _dockApproachSpeed    = DEFAULT_DOCK_APPROACH_SPEED;
 private float  _dockFinalSpeed       = DEFAULT_DOCK_FINAL_SPEED;
 private float  _dockWaypointDistance = DEFAULT_DOCK_WAYPOINT_DISTANCE;
 
+private bool   _bcEnabled         = DEFAULT_BC_ENABLED;
+private int    _bcIndex           = DEFAULT_BC_INDEX;
+private string _bcPtaOn           = DEFAULT_BC_PTA_ON;
+private string _bcPtaOff          = DEFAULT_BC_PTA_OFF;
+private string _bcCruiseOn        = DEFAULT_BC_CRUISE_ON;
+private string _bcCruiseOff       = DEFAULT_BC_CRUISE_OFF;
+private string _bcAscendOn        = DEFAULT_BC_ASCEND_ON;
+private string _bcAscendComplete  = DEFAULT_BC_ASCEND_COMPLETE;
+private string _bcAscendAbort     = DEFAULT_BC_ASCEND_ABORT;
+private string _bcDescendOn       = DEFAULT_BC_DESCEND_ON;
+private string _bcDescendComplete = DEFAULT_BC_DESCEND_COMPLETE;
+private string _bcDescendAbort    = DEFAULT_BC_DESCEND_ABORT;
+private string _bcDockStart       = DEFAULT_BC_DOCK_START;
+private string _bcDockComplete    = DEFAULT_BC_DOCK_COMPLETE;
+private string _bcDockAbort       = DEFAULT_BC_DOCK_ABORT;
+
 // -------------------------------------------------------------------------
 // State
 // -------------------------------------------------------------------------
@@ -148,6 +181,7 @@ private Vector3D  _dockTargetUp    = Vector3D.Up;
 // -------------------------------------------------------------------------
 
 private IMyShipController               _controller;
+private IMyBroadcastController          _broadcastController;
 private IMyShipConnector                _dockConnector;
 private readonly List<IMyShipConnector> _dockConnectors = new List<IMyShipConnector>();
 private readonly List<IMyGyro>        _gyros          = new List<IMyGyro>();
@@ -235,6 +269,7 @@ public void Main(string argument, UpdateType updateSource)
             _horizonActive  = false;
             _altitudeActive = false;
             _ascendActive   = false;
+            Broadcast(_bcPtaOn);
             if (IsShipDocked())
             {
                 _bootPhase = 0;
@@ -276,6 +311,7 @@ public void Main(string argument, UpdateType updateSource)
                 _descendUpThrusters.Clear();
                 _descendActive = false;
             }
+            Broadcast(_bcPtaOff);
             Runtime.UpdateFrequency = UpdateFrequency.None;
             DrawOffline();
             return;
@@ -331,6 +367,7 @@ public void Main(string argument, UpdateType updateSource)
             bool inGravity  = _controller.GetNaturalGravity().LengthSquared() > 0.001;
             _horizonActive  = inGravity;
             _altitudeActive = inGravity;
+            Broadcast(_bcCruiseOn);
             ApplyUpdateFrequency();
             DrawStatus();
             return;
@@ -347,6 +384,7 @@ public void Main(string argument, UpdateType updateSource)
             ReleaseThrusters();
             foreach (var t in _brakeThrusters) t.Enabled = true;
             _brakeThrusters.Clear();
+            Broadcast(_bcCruiseOff);
             ApplyUpdateFrequency();
             DrawStatus();
             return;
@@ -366,6 +404,7 @@ public void Main(string argument, UpdateType updateSource)
             if (!CheckAscendRequirements()) { DrawAscendUnavailable(); return; }
             InitAscend();
             _ascendActive = true;
+            Broadcast(_bcAscendOn);
             ApplyUpdateFrequency();
             DrawStatus();
             return;
@@ -391,6 +430,7 @@ public void Main(string argument, UpdateType updateSource)
             if (!CheckDescendRequirements()) { DrawDescendUnavailable(); return; }
             InitDescend();
             _descendActive = true;
+            Broadcast(_bcDescendOn);
             ApplyUpdateFrequency();
             DrawStatus();
             return;
@@ -717,6 +757,7 @@ private void StartDock(string name)
     _horizonActive   = false;
     _altitudeActive  = false;
 
+    Broadcast(_bcDockStart);
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
     DrawStatus();
 }
@@ -888,8 +929,8 @@ private void CompleteDock(bool abort, string reason)
     _dockActive    = false;
     _dockStatus    = "---";
 
-    if (abort)
-        ShowFlash("DOCK ABORTED", reason, COL_BAD, 8);
+    if (abort) { ShowFlash("DOCK ABORTED", reason, COL_BAD, 8); Broadcast(_bcDockAbort); }
+    else       Broadcast(_bcDockComplete);
     // Success: IsShipDocked() is now true — DrawStatus() and ApplyUpdateFrequency()
     // in the tick section pick it up immediately on the same frame
 }
@@ -1490,8 +1531,8 @@ private void CompleteAscend(bool manual = false)
     foreach (var t in _ascendDownThrusters)   t.Enabled = true;
     _ascendActive = false;
     _ascendStatus = "---";
-    if (manual) ShowFlash("ASCEND ABORTED",   "",               COL_WARN, 8);
-    else        ShowFlash("ASCEND COMPLETE",   "ORBIT REACHED",  COL_OK,   8);
+    if (manual) { ShowFlash("ASCEND ABORTED",  "",              COL_WARN, 8); Broadcast(_bcAscendAbort); }
+    else        { ShowFlash("ASCEND COMPLETE", "ORBIT REACHED", COL_OK,   8); Broadcast(_bcAscendComplete); }
     ApplyUpdateFrequency();
     DrawStatus();
 }
@@ -1629,8 +1670,8 @@ private void CompleteDescend(bool manual = false)
     ReleaseGyros();
     _descendActive = false;
     _descendStatus = "---";
-    if (manual) ShowFlash("DESCEND ABORTED",   "",                                              COL_WARN, 8);
-    else        ShowFlash("DESCEND COMPLETE",   _descendTarget.ToString("F0") + " m — MANUAL CONTROL", COL_OK, 8);
+    if (manual) { ShowFlash("DESCEND ABORTED",  "",                                                      COL_WARN, 8); Broadcast(_bcDescendAbort); }
+    else        { ShowFlash("DESCEND COMPLETE", _descendTarget.ToString("F0") + " m — MANUAL CONTROL", COL_OK,   8); Broadcast(_bcDescendComplete); }
     ApplyUpdateFrequency();
     DrawStatus();
 }
@@ -1674,6 +1715,23 @@ private void ParseConfig()
     dirty |= EnsureFloat (ini, SEC_DOCK,     "approach_speed",     DEFAULT_DOCK_APPROACH_SPEED,    ref _dockApproachSpeed);
     dirty |= EnsureFloat (ini, SEC_DOCK,     "final_speed",        DEFAULT_DOCK_FINAL_SPEED,       ref _dockFinalSpeed);
     dirty |= EnsureFloat (ini, SEC_DOCK,     "waypoint_distance",  DEFAULT_DOCK_WAYPOINT_DISTANCE, ref _dockWaypointDistance);
+
+    dirty |= EnsureBool  (ini, SEC_BROADCAST, "enabled",          DEFAULT_BC_ENABLED,          ref _bcEnabled);
+    dirty |= EnsureInt   (ini, SEC_BROADCAST, "index",            DEFAULT_BC_INDEX,            ref _bcIndex);
+    _bcIndex = Math.Max(1, Math.Min(8, _bcIndex));
+    dirty |= EnsureString(ini, SEC_BROADCAST, "pta_on",           DEFAULT_BC_PTA_ON,           ref _bcPtaOn);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "pta_off",          DEFAULT_BC_PTA_OFF,          ref _bcPtaOff);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "cruise_on",        DEFAULT_BC_CRUISE_ON,        ref _bcCruiseOn);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "cruise_off",       DEFAULT_BC_CRUISE_OFF,       ref _bcCruiseOff);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "ascend_on",        DEFAULT_BC_ASCEND_ON,        ref _bcAscendOn);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "ascend_complete",  DEFAULT_BC_ASCEND_COMPLETE,  ref _bcAscendComplete);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "ascend_abort",     DEFAULT_BC_ASCEND_ABORT,     ref _bcAscendAbort);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "descend_on",       DEFAULT_BC_DESCEND_ON,       ref _bcDescendOn);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "descend_complete", DEFAULT_BC_DESCEND_COMPLETE, ref _bcDescendComplete);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "descend_abort",    DEFAULT_BC_DESCEND_ABORT,    ref _bcDescendAbort);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "dock_start",       DEFAULT_BC_DOCK_START,       ref _bcDockStart);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "dock_complete",    DEFAULT_BC_DOCK_COMPLETE,    ref _bcDockComplete);
+    dirty |= EnsureString(ini, SEC_BROADCAST, "dock_abort",       DEFAULT_BC_DOCK_ABORT,       ref _bcDockAbort);
 
     ApplyTheme(_theme);
 
@@ -1757,6 +1815,13 @@ private void ApplyTheme(string name)
     }
 }
 
+private bool EnsureBool(MyIni ini, string sec, string key, bool def, ref bool field)
+{
+    if (!ini.ContainsKey(sec, key)) { ini.Set(sec, key, def); field = def; return true; }
+    field = ini.Get(sec, key).ToBoolean(def);
+    return false;
+}
+
 private bool EnsureFloat(MyIni ini, string sec, string key, float def, ref float field)
 {
     if (!ini.ContainsKey(sec, key)) { ini.Set(sec, key, def); field = def; return true; }
@@ -1805,6 +1870,11 @@ private void InitBlocks()
         b => b.IsSameConstructAs(Me) && b.CustomName.Contains("[PTA_DOCK]"));
     if (_dockConnectors.Count == 0)
         GridTerminalSystem.GetBlocksOfType(_dockConnectors, b => b.IsSameConstructAs(Me));
+
+    var bcList = new List<IMyBroadcastController>();
+    GridTerminalSystem.GetBlocksOfType(bcList,
+        b => b.IsSameConstructAs(Me) && b.CustomName.Contains("[PTA_BC]"));
+    _broadcastController = bcList.Count > 0 ? bcList[0] : null;
 
     InitSurfaces();
 
@@ -1984,6 +2054,15 @@ private string V3Str(Vector3D v)
     return v.X.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) + ":" +
            v.Y.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) + ":" +
            v.Z.ToString("F4", System.Globalization.CultureInfo.InvariantCulture);
+}
+
+private void Broadcast(string message)
+{
+    if (!_bcEnabled || _broadcastController == null || string.IsNullOrEmpty(message)) return;
+    var sb = new StringBuilder();
+    sb.Append(message);
+    _broadcastController.SetValue<StringBuilder>("Message" + (_bcIndex - 1), sb);
+    _broadcastController.ApplyAction("Transmit Message " + _bcIndex);
 }
 
 private bool TryParseV3(string s, out Vector3D v)
