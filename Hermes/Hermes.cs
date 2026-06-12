@@ -608,29 +608,37 @@ private void RefreshLcds()
 
 private void DrawDispatch(IMyTextSurface s)
 {
-    var   vp  = VP(s);
-    var   pan = Inset(vp, 8f);
-    float cx  = vp.X + vp.Width * 0.5f;
-    float pw  = pan.Width;
-    float ph  = pan.Height;
+    var   vp     = VP(s);
+    float margin = Math.Max(2f, Math.Min(vp.Width, vp.Height) * 0.015f);
+    var   pan    = Inset(vp, margin);
+    float cx     = vp.X + vp.Width * 0.5f;
+    float pw     = pan.Width;
+    float ph     = pan.Height;
 
-    // Measure base char at scale 1 to derive working scales from actual surface size
     _sb.Clear(); _sb.Append('W');
     var   base1  = s.MeasureStringInPixels(_sb, "Monospace", 1.0f);
     float baseH  = base1.Y > 0 ? base1.Y : 28f;
     float baseW  = base1.X > 0 ? base1.X : 15f;
 
-    float headScale = Math.Max(0.25f, Math.Min(0.9f,  ph * 0.13f / baseH));
-    float bodyScale = Math.Max(0.20f, Math.Min(0.65f, ph * 0.085f / baseH));
+    // All zones are pure fractions of panel height — no fixed pixel additions
+    float headH    = ph * 0.20f;
+    float footH    = ph * 0.12f;
+    float contentH = ph - headH - footH;
 
-    float cw       = baseW  * bodyScale;
-    float rowH     = baseH  * bodyScale + 3f;
-    int   maxChars = Math.Max(8, (int)((pw - 20f) / cw));
+    float headScale = Math.Max(0.2f, Math.Min(0.9f,  headH    * 0.65f / baseH));
+    float bodyScale = Math.Max(0.15f, Math.Min(0.7f, contentH * 0.20f / baseH));
 
-    float headH = baseH * headScale + 18f;
-    float footH = baseH * bodyScale * 0.7f + 12f;
-    float divY1 = pan.Y    + headH;
-    float divY2 = pan.Bottom - footH;
+    float rowH     = baseH * bodyScale + 3f;
+    float cw       = baseW * bodyScale;
+    int   maxChars = Math.Max(8, (int)((pw - margin * 2f) / cw));
+
+    // Use single-line rows on short surfaces (wide LCDs, etc.)
+    bool  singleLine = contentH < baseH * bodyScale * 6f;
+    float entryH     = singleLine ? rowH + 3f : rowH * 2f + 4f;
+
+    float divY1     = pan.Y    + headH;
+    float divY2     = pan.Bottom - footH;
+    float headTextY = pan.Y + (headH - baseH * headScale) * 0.4f;
 
     using (var fr = s.DrawFrame())
     {
@@ -638,35 +646,47 @@ private void DrawDispatch(IMyTextSurface s)
         Fill(fr, pan, H_PANEL);
         DrawBorder(fr, pan, H_BORDER, 2f);
 
-        Txt(fr, "HERMES DISPATCH", pan.X + 12f, pan.Y + 6f,  H_HEAD, headScale, TextAlignment.LEFT);
-        Txt(fr, DateTime.Now.ToString("HH:mm"), pan.Right - 12f, pan.Y + 8f, H_DIM, bodyScale, TextAlignment.RIGHT);
+        Txt(fr, "HERMES DISPATCH", pan.X + margin, headTextY, H_HEAD, headScale, TextAlignment.LEFT);
+        Txt(fr, DateTime.Now.ToString("HH:mm"), pan.Right - margin, headTextY + 2f, H_DIM, bodyScale, TextAlignment.RIGHT);
 
-        Fill(fr, new RectangleF(pan.X + 6f, divY1, pw - 12f, 2f), H_TEXT);
-        Fill(fr, new RectangleF(pan.X + 6f, divY2, pw - 12f, 2f), H_TEXT);
+        Fill(fr, new RectangleF(pan.X + margin * 0.5f, divY1, pw - margin, 2f), H_TEXT);
+        Fill(fr, new RectangleF(pan.X + margin * 0.5f, divY2, pw - margin, 2f), H_TEXT);
 
-        Txt(fr, "Intergrid Messaging  v" + VERSION, cx, divY2 + 3f, H_DIM, bodyScale * 0.6f, TextAlignment.CENTER);
+        Txt(fr, "Intergrid Messaging  v" + VERSION, cx,
+            divY2 + (footH - baseH * bodyScale * 0.6f) * 0.3f, H_DIM, bodyScale * 0.6f, TextAlignment.CENTER);
 
-        float dy = divY1 + 6f;
+        float dy = divY1 + 4f;
 
         if (_messages.Count == 0)
         {
-            Txt(fr, "No messages — all clear.", cx, dy + rowH, H_DIM, bodyScale, TextAlignment.CENTER);
+            Txt(fr, "No messages — all clear.", cx, dy + rowH * 0.5f, H_DIM, bodyScale, TextAlignment.CENTER);
         }
         else
         {
             for (int i = 0; i < _messages.Count; i++)
             {
-                if (dy + rowH * 2f + 2f > divY2 - 4f) break;
+                if (dy + entryH > divY2 - 2f) break;
 
-                var    m   = _messages[i];
-                string hdr = "#" + (i + 1) + "  [" + m.Timestamp + "]  " + m.GridName;
-                string txt = m.Text;
-                if (hdr.Length > maxChars) hdr = hdr.Substring(0, maxChars - 1) + "~";
-                if (txt.Length > maxChars) txt = txt.Substring(0, maxChars - 1) + "~";
+                var m = _messages[i];
 
-                Txt(fr, hdr,         pan.X + 12f, dy,        H_DIM,  bodyScale, TextAlignment.LEFT);
-                Txt(fr, "  " + txt,  pan.X + 12f, dy + rowH, H_TEXT, bodyScale, TextAlignment.LEFT);
-                dy += rowH * 2f + 4f;
+                if (singleLine)
+                {
+                    string line = "#" + (i + 1) + "  [" + m.Timestamp + "]  " + m.GridName + "  " + m.Text;
+                    if (line.Length > maxChars) line = line.Substring(0, maxChars - 1) + "~";
+                    Txt(fr, line, pan.X + margin, dy, H_TEXT, bodyScale, TextAlignment.LEFT);
+                }
+                else
+                {
+                    string hdr = "#" + (i + 1) + "  [" + m.Timestamp + "]  " + m.GridName;
+                    string txt = m.Text;
+                    if (hdr.Length > maxChars) hdr = hdr.Substring(0, maxChars - 1) + "~";
+                    if (txt.Length > maxChars) txt = txt.Substring(0, maxChars - 1) + "~";
+
+                    Txt(fr, hdr,         pan.X + margin, dy,        H_DIM,  bodyScale, TextAlignment.LEFT);
+                    Txt(fr, "  " + txt,  pan.X + margin, dy + rowH, H_TEXT, bodyScale, TextAlignment.LEFT);
+                }
+
+                dy += entryH;
             }
         }
     }
@@ -677,23 +697,25 @@ private void DrawCarousel(IMyTextSurface s)
     if (_messages.Count == 0) { DrawDispatch(s); return; }
     if (_carouselIndex >= _messages.Count) _carouselIndex = 0;
 
-    var   vp  = VP(s);
-    var   pan = Inset(vp, 8f);
-    float cx  = vp.X + vp.Width  * 0.5f;
-    float ph  = pan.Height;
-    float mid = pan.Y + ph * 0.5f;
+    var   vp     = VP(s);
+    float margin = Math.Max(2f, Math.Min(vp.Width, vp.Height) * 0.015f);
+    var   pan    = Inset(vp, margin);
+    float cx     = vp.X + vp.Width * 0.5f;
+    float ph     = pan.Height;
+    float mid    = pan.Y + ph * 0.5f;
 
     _sb.Clear(); _sb.Append('W');
     var   base1    = s.MeasureStringInPixels(_sb, "Monospace", 1.0f);
     float baseH    = base1.Y > 0 ? base1.Y : 28f;
-    float msgScale = Math.Max(0.3f, Math.Min(0.9f,  ph * 0.15f / baseH));
-    float metScale = Math.Max(0.2f, Math.Min(0.55f, ph * 0.075f / baseH));
+    float msgScale = Math.Max(0.2f, Math.Min(0.9f,  ph * 0.22f / baseH));
+    float metScale = Math.Max(0.15f, Math.Min(0.6f, ph * 0.10f / baseH));
 
-    float msgH  = baseH * msgScale;
-    float divGap = msgH * 0.6f;
+    float msgH = baseH * msgScale;
+    float gap  = ph * 0.12f;
 
     var    m       = _messages[_carouselIndex];
     string counter = (_carouselIndex + 1) + " / " + _messages.Count;
+    float  textY   = mid - msgH * 0.5f;
 
     using (var fr = s.DrawFrame())
     {
@@ -701,12 +723,12 @@ private void DrawCarousel(IMyTextSurface s)
         Fill(fr, pan, H_PANEL);
         DrawBorder(fr, pan, H_BORDER, 2f);
 
-        Fill(fr, new RectangleF(pan.X + 6f, mid - divGap - msgH * 0.1f, pan.Width - 12f, 2f), H_TEXT);
-        Txt(fr, m.Text, cx, mid - divGap + 2f, H_TEXT, msgScale, TextAlignment.CENTER);
-        Fill(fr, new RectangleF(pan.X + 6f, mid + divGap + msgH * 0.8f, pan.Width - 12f, 2f), H_TEXT);
+        Fill(fr, new RectangleF(pan.X + margin * 0.5f, textY - gap,              pan.Width - margin, 2f), H_TEXT);
+        Txt(fr,  m.Text, cx, textY, H_TEXT, msgScale, TextAlignment.CENTER);
+        Fill(fr, new RectangleF(pan.X + margin * 0.5f, textY + msgH + gap * 0.5f, pan.Width - margin, 2f), H_TEXT);
 
         Txt(fr, m.GridName + "  •  " + m.Timestamp + "  •  " + counter,
-            cx, mid + divGap + msgH * 0.9f + 4f, H_DIM, metScale, TextAlignment.CENTER);
+            cx, textY + msgH + gap * 0.6f + 2f, H_DIM, metScale, TextAlignment.CENTER);
     }
 }
 
