@@ -12,6 +12,7 @@
 //   DESCEND_ON / DESCEND_OFF   — descend to 3000m, keeping level
 //   SAVE <name>                — while connected, save dock target under name
 //   DOCK <name>                — fly to and connect to saved dock target
+//   ABORT                      — abort any active feature, return to standby
 // Display: tag any LCD or cockpit with [PTA] in the name
 // Docking: tag connectors with [PTA_DOCK] to mark them as dock connectors
 //          (falls back to all connectors if none are tagged)
@@ -78,7 +79,7 @@ private const int    DEFAULT_COCKPIT_SCREEN     = 0;
 private const string DEFAULT_THEME             = "cyber";
 
 private const int    BOOT_TICKS = 12;
-private const string VERSION   = "2.0";
+private const string VERSION   = "2.1";
 
 // -------------------------------------------------------------------------
 // Display colors  (mutable — overwritten by ApplyTheme on config load)
@@ -170,11 +171,12 @@ private enum AlignSubPhase { Forward, Roll }
 private bool          _dockActive      = false;
 private DockPhase     _dockPhase       = DockPhase.Aligning;
 private AlignSubPhase _alignSubPhase   = AlignSubPhase.Forward;
-private string    _dockStatus      = "---";
-private string    _dockTargetName  = "";
-private Vector3D  _dockTargetPos   = Vector3D.Zero;
-private Vector3D  _dockApproachDir = Vector3D.Forward;
-private Vector3D  _dockTargetUp    = Vector3D.Up;
+private string    _dockStatus           = "---";
+private string    _dockTargetName       = "";
+private Vector3D  _dockTargetPos        = Vector3D.Zero;
+private Vector3D  _dockApproachDir      = Vector3D.Forward;
+private Vector3D  _dockTargetUp         = Vector3D.Up;
+private float     _activeDockWaypointDist = DEFAULT_DOCK_WAYPOINT_DISTANCE;
 
 // -------------------------------------------------------------------------
 // Blocks
@@ -222,6 +224,7 @@ public void Main(string argument, UpdateType updateSource)
     // Skip during boot so the boot animation completes before the docked screen takes over.
     if (_bootPhase == 0 && IsShipDocked()
         && argument != "PTA_OFF" && argument != "PTA_ON"
+        && argument != "ABORT"
         && !argument.StartsWith("SAVE"))
     {
         if (argument.Length > 0)
@@ -439,6 +442,77 @@ public void Main(string argument, UpdateType updateSource)
         case "DESCEND_OFF":
             CompleteDescend(manual: true);
             return;
+
+        case "ABORT":
+        {
+            string action  = null;
+            bool   handled = false;
+
+            if (_dockActive)
+            {
+                ReleaseThrusters();
+                ReleaseGyros();
+                _dockActive = false;
+                _dockStatus = "---";
+                action  = "DOCK";
+                handled = true;
+            }
+            else if (_ascendActive)
+            {
+                foreach (var t in _ascendUpThrusters)  { t.ThrustOverridePercentage = 0f; t.Enabled = true; }
+                foreach (var t in _ascendDownThrusters)   t.Enabled = true;
+                _ascendActive  = false;
+                _ascendStatus  = "---";
+                _horizonActive = false;
+                ReleaseGyros();
+                action  = "ASCEND";
+                handled = true;
+            }
+            else if (_descendActive)
+            {
+                foreach (var t in _descendUpThrusters) t.ThrustOverridePercentage = 0f;
+                _descendUpThrusters.Clear();
+                _descendActive  = false;
+                _descendStatus  = "---";
+                _horizonActive  = false;
+                ReleaseGyros();
+                action  = "DESCEND";
+                handled = true;
+            }
+            else if (_brakeThrusters.Count > 0)
+            {
+                foreach (var t in _brakeThrusters) t.Enabled = true;
+                _brakeThrusters.Clear();
+                _horizonActive      = false;
+                _altitudeActive     = false;
+                _desiredPitchOffset = 0f;
+                ReleaseGyros();
+                ReleaseThrusters();
+                action  = "CRUISE";
+                handled = true;
+            }
+            else if (_horizonActive || _altitudeActive)
+            {
+                _horizonActive      = false;
+                _altitudeActive     = false;
+                _desiredPitchOffset = 0f;
+                ReleaseGyros();
+                ReleaseThrusters();
+                handled = true;
+            }
+
+            if (action != null)
+            {
+                ShowFlash(action, "ABORTED", COL_BAD, 8);
+                Broadcast(action + " ABORTED");
+            }
+            else if (!handled)
+                ShowFlash("NOTHING TO ABORT", "", COL_DIM, 4);
+
+            ApplyUpdateFrequency();
+            DrawStatus();
+            return;
+        }
     }
 
     // Boot animation ticks
@@ -688,10 +762,11 @@ private void SaveDock(string name)
     var ini = new MyIni();
     ini.TryParse(Me.CustomData);
     string section = "dock:" + name;
-    ini.Set(section, "connector", connected.CustomName);
-    ini.Set(section, "position",  V3Str(connected.WorldMatrix.Translation));
-    ini.Set(section, "approach",  V3Str(connected.WorldMatrix.Forward));
-    ini.Set(section, "up",        V3Str(connected.WorldMatrix.Up));
+    ini.Set(section, "connector",         connected.CustomName);
+    ini.Set(section, "position",          V3Str(connected.WorldMatrix.Translation));
+    ini.Set(section, "approach",          V3Str(connected.WorldMatrix.Forward));
+    ini.Set(section, "up",                V3Str(connected.WorldMatrix.Up));
+    ini.Set(section, "waypoint_distance", _dockWaypointDistance);
     Me.CustomData = ini.ToString();
 
     ShowFlash("DOCK SAVED", name, COL_OK, 5);
@@ -745,11 +820,20 @@ private void StartDock(string name)
     ParseConfig();
     InitBlocks();
 
-    _dockTargetName  = name;
-    _dockTargetPos   = pos;
-    _dockApproachDir = Vector3D.Normalize(approach);
-    _dockTargetUp    = Vector3D.Normalize(up);
-    _dockConnector   = connectors[0];
+    _dockTargetName         = name;
+    _dockTargetPos          = pos;
+    _dockApproachDir        = Vector3D.Normalize(approach);
+    _dockTargetUp           = Vector3D.Normalize(up);
+    string wdStr;
+    float  wdParsed;
+    wdStr = ini.Get(section, "waypoint_distance").ToString("");
+    _activeDockWaypointDist = (wdStr.Length > 0
+        && float.TryParse(wdStr, System.Globalization.NumberStyles.Float,
+                          System.Globalization.CultureInfo.InvariantCulture, out wdParsed)
+        && wdParsed > 0f)
+        ? wdParsed
+        : _dockWaypointDistance;
+    _dockConnector          = connectors[0];
     _dockPhase       = DockPhase.Aligning;
     _alignSubPhase   = AlignSubPhase.Forward;
     _dockStatus      = "ALIGNING";
@@ -846,7 +930,7 @@ private void DockAlignTick(bool inGravity, Vector3D gravity)
 private void DockApproachTick(bool inGravity, Vector3D gravity)
 {
     Vector3D connPos    = _dockConnector.WorldMatrix.Translation;
-    Vector3D waypoint   = _dockTargetPos - _dockApproachDir * _dockWaypointDistance;
+    Vector3D waypoint   = _dockTargetPos - _dockApproachDir * _activeDockWaypointDist;
     Vector3D toWaypoint = waypoint - connPos;
     double   dist       = toWaypoint.Length();
 
@@ -2012,7 +2096,7 @@ private void ApplyVelocityTarget(Vector3D desiredVelocity, Vector3D gravity)
 
 private void ApplyUpdateFrequency()
 {
-    if (_altitudeActive || _ascendActive || _descendActive || _dockActive)
+    if (_altitudeActive || _ascendActive || _descendActive || _dockActive || _flashActive)
         Runtime.UpdateFrequency = UpdateFrequency.Update10;
     else if (_horizonActive || IsShipDocked())
         Runtime.UpdateFrequency = UpdateFrequency.Update100;

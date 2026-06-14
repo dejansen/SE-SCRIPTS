@@ -1,4 +1,4 @@
-# PTA — Planetary Travel Assistant `v2.0`
+# PTA — Planetary Travel Assistant `v2.1`
 
 Autopilot assistant for planetary flight, orbit transitions, and autonomous connector docking. Features are enabled independently via hotbar commands. Live status is shown on any tagged LCD, cockpit screen, or the PB's own screen. Optional Broadcast Controller support for audio announcements when away from the cockpit.
 
@@ -14,13 +14,14 @@ Autopilot assistant for planetary flight, orbit transitions, and autonomous conn
 - **Autodock** — teach-and-replay connector docking. Save a dock target while physically connected (`SAVE <name>`), then fly to approach distance and run `DOCK <name>` to dock autonomously. Works in space and on planets, for any connector orientation.
 - **Display** — animated boot screen, live status panel with colour-coded state, dedicated screens for ASCEND, DESCEND, DOCK, and CONNECTED states.
 - **Broadcast announcements** — optional Broadcast Controller support. Tag one controller `[PTA_BC]` and PTA will announce mode changes (cruise, ascend, descend, dock, on/off) over ship comms. Message text and slot index are fully configurable via Custom Data.
+- **Abort** — `ABORT` instantly cancels whichever feature is running (dock, ascend, descend, or cruise), releases all overrides, and returns PTA to standby. PTA stays online.
 
 ---
 
 ## Safety Guards
 
 - **PTA offline** — when PTA is off, only `PTA_ON` works. All other commands are silently blocked.
-- **Ship connected** — when a dock connector is connected, only `PTA_OFF`, `PTA_ON`, and `SAVE` work. The display shows **SHIP IS CONNECTED** in green. Attempting any blocked command flashes it red briefly.
+- **Ship connected** — when a dock connector is connected, only `PTA_OFF`, `PTA_ON`, `ABORT`, and `SAVE` work. The display shows **SHIP IS CONNECTED** in green. Attempting any blocked command flashes it red briefly.
 - **Mode conflicts** — commands that conflict with an active mode (e.g. `CRUISE_ON` during ascent) are blocked and echo the reason to the PB detail panel.
 
 ---
@@ -132,6 +133,22 @@ Manually ends descent. Releases up thruster overrides and gyro control. Shows **
 
 ---
 
+### `ABORT`
+Emergency cancel. Instantly stops whichever feature is currently active and releases all overrides. PTA stays online — use `PTA_OFF` only if you want to shut down entirely.
+
+| Active feature | What ABORT does |
+|---|---|
+| DOCK | Releases thrusters and gyros; ship retains current velocity |
+| ASCEND | Restores all thruster groups; releases gyros |
+| DESCEND | Releases up thruster overrides; releases gyros |
+| CRUISE | Re-enables brake thrusters; releases gyros and overrides |
+| HORIZON / ALTITUDE | Silently releases overrides; no flash or broadcast |
+| Nothing | Flashes **NOTHING TO ABORT** |
+
+Shows `<FEATURE> ABORTED` in large red text on the display and broadcasts the same message. Horizon and altitude standalone do not flash or broadcast.
+
+---
+
 ### `SAVE <name>`
 Saves the current dock target. Run this while physically connected to the target connector.
 
@@ -222,6 +239,7 @@ Large Connector [PTA_DOCK]
 | 9 | `DESCEND_OFF` | Descend Off |
 | 10 | `SAVE mybase` | Save Dock |
 | 11 | `DOCK mybase` | Dock |
+| 12 | `ABORT` | Abort |
 
 ### Display setup
 
@@ -326,7 +344,16 @@ dock_complete   = Docking complete
 dock_abort      = Docking aborted
 ```
 
-Saved dock targets are stored as `[dock:name]` sections and are written by the `SAVE` command — do not edit them manually.
+Saved dock targets are stored as `[dock:name]` sections and are written by the `SAVE` command. Each section also contains a `waypoint_distance` key that overrides the global value for that dock only — you can edit this manually to tune clearance per dock without affecting others.
+
+```
+[dock:mybase]
+connector = Large Connector [PTA_DOCK]
+position  = ...
+approach  = ...
+up        = ...
+waypoint_distance = 20   ; override for this dock only
+```
 
 Changes to Custom Data take effect on the next `PTA_ON` or feature activation. New keys are written with default values automatically; existing values are never overwritten.
 
