@@ -285,6 +285,58 @@ Both `Main(string argument, UpdateType updateSource)` and `Main(string argument)
 - **Does NOT exist in the scripting whitelist.** There is no scriptable Event Controller interface.
 - If you need to trigger automation on a state change, use a **Timer Block** (`IMyTimerBlock`) and call `ApplyAction("TriggerNow")` on it.
 
+### IMyProjector
+- `TotalBlocks` / `RemainingBlocks` / `RemainingArmorBlocks` / `BuildableBlocksCount` — block **counts** only
+- `RemainingBlocksPerType` — `Dictionary<MyDefinitionBase, int>` of block definition → count still to weld. On an unbuilt, projecting blueprint this equals the full blueprint, so it is the BOM source. Iterate with `entry.Key.Id.SubtypeName` for the block subtype.
+- **No API exposes a block's component recipe.** The projector does not expose the projected grid's slim blocks either, so `GetMissingComponents` is not reachable. To convert blocks → components (Steel Plate counts etc.) you must carry a **hardcoded block-subtype → component table** (the approach used by Projector2LCD / Projector2Assembler, and by `ProjectorBOM` in this repo).
+- `LoadBlueprint(string)` / `LoadRandomBlueprint(string)` exist but cannot pick an arbitrary stored blueprint by path; offset/rotation are settable (`ProjectionOffset`, `ProjectionRotation`, then `UpdateOffsetAndRotation()`).
+- Large- and small-grid blocks have **distinct SubtypeIds** (`LargeBlockArmorBlock` vs `SmallBlockArmorBlock`), so a subtype-keyed cost table distinguishes grid size automatically.
+
+### IMyIntergridCommunicationSystem (IGC)
+
+Accessed via `IGC` in any `MyGridProgram`. Handles all inter-grid messaging.
+
+#### TransmissionDistance enum
+
+| Value | Behaviour |
+|---|---|
+| `TransmissionDistance.AntennaRelay` | Default. Broadcast reaches all listeners within the sender's antenna range. |
+| `TransmissionDistance.TransmissionDistanceMax` | Broadcast at maximum antenna range — functionally the same as `AntennaRelay` but ensures the sender's antenna is used at full power. **Does NOT bypass antenna range or become server-wide.** |
+| `TransmissionDistance.CurrentConstruct` | Only listeners on the same construct (same PB grid) receive the broadcast. |
+| `TransmissionDistance.ConnectedConstructs` | Only listeners on physically connected constructs (via connectors, etc.) receive it. |
+
+#### Antenna range — what actually matters
+
+- Broadcasts are physically range-limited. Both grids need to be within the sender's antenna range.
+- The receiver's antenna **transmit** range is irrelevant for receiving — only the sender's range matters.
+- The receiver's antenna must have **Enable Broadcast ON** or it will not receive any IGC messages.
+- If no antenna is present, IGC still works within physics range (~150–300m, i.e. both grids must be loaded near each other).
+- The IGC system automatically uses whatever connection is available (radio antenna, laser antenna, physical connector) — you do not need to specify which.
+
+#### Message buffering — verified in-game behaviour
+
+When a broadcast arrives and the receiving PB has a registered listener (`IGC.RegisterBroadcastListener`), the game queues the message in an internal buffer. Key findings:
+
+- **PB disabled (grid still loaded and in range):** messages queue up in the IGC buffer. When the PB is re-enabled and registers its listener, it drains the entire queue at once — potentially receiving all retry transmissions simultaneously.
+- **Grid unloaded (nobody nearby):** no active listener, no buffer. Messages sent during this period are dropped. The sender's retry queue (if `ack = true`) handles eventual delivery once the grid loads again.
+- **Practical consequence for ACK retry scripts:** if the receiver PB was off while the grid was loaded, it may receive multiple copies of the same payload (one per retry) when it comes back online. Deduplicate by `gridName + text` before inserting into the message log, and always send the ACK even for duplicates so the sender stops retrying.
+
+#### Unicast
+
+- `IGC.SendUnicastMessage(long address, string tag, T data)` — sends directly to a single endpoint by IGC address.
+- The sender's IGC address is `IGC.Me` (a `long`). Include it in broadcast payloads when ACK replies are needed.
+- Unicast goes through the `IGC.UnicastListener`; check `UnicastListener.HasPendingMessage` and `UnicastListener.AcceptMessage()`.
+- Unicast is also range-limited by the same antenna rules as broadcast.
+
+#### Checking reachability
+
+- `IGC.IsEndpointReachable(long address)` — returns true if the target is currently reachable. Use before unicast when delivery confirmation matters.
+
+#### SetMessageCallback
+
+- `listener.SetMessageCallback()` — causes `Main()` to be called with `UpdateType.IGC` when a message arrives. Pass an optional string argument to receive in `Main`'s argument parameter.
+- Without this, messages only arrive when `Main` is called by another trigger (timer, Update100, etc.) and `HasPendingMessage` is polled manually.
+
 ### GridTerminalSystem
 - `GetBlocksOfType<T>(List<T>, Func<T, bool>)` — fills existing list with optional filter
 - `GetBlocksOfType<T>(List<T>)` — fills list with no filter (gets all blocks of type T)
