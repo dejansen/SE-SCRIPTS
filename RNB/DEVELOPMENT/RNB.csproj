@@ -4,7 +4,12 @@
     <TargetFramework>net481</TargetFramework>
     <LangVersion>6</LangVersion>
     <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="RNB.Project.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="SpaceEngineers.ScriptingReferences" Version="*" />

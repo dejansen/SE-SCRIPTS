@@ -1,7 +1,7 @@
-# RNB-Claude.md — AI Agent Instructions
+﻿# RNB-Claude.md — AI Agent Instructions
 
 Guidelines for AI coding agents working on `RNB.cs`.
-Script: **RNB — Rev NanoBot Manager v1.0.0**
+Script: **RNB — Rev NanoBot Manager v2.0.0**
 Author: RevGamer
 
 ---
@@ -66,6 +66,7 @@ BootSeconds=6
 RescanSeconds=10
 AssemblerQueueSeconds=0.5
 AutoOfflineSeconds=600
+WakeOnProjector=true
 ```
 
 ### Valid Roles
@@ -114,6 +115,8 @@ AutoOfflineSeconds=600
 - Coloured 3px border matching the alert light state colour
 - Small `RNB` label top-left, elapsed idle timer top-right
 
+Corner registration accepts multiple surfaces from tagged `IMyTextSurfaceProvider` blocks. `Role=Corner` wins over page registration for the same surface.
+
 **State to colour/subline mapping:**
 
 | State | Border | Sub-line |
@@ -148,6 +151,7 @@ AutoOfflineSeconds=600
 | `_weldPeak` | `int` | Peak queue count for progress bar latch |
 | `_elapsed` | `double` | Accumulated seconds since start |
 | `_lastActivityTime` | `double` | `_elapsed` at last tick with BaR activity |
+| `_wakeOnProjector` | `bool` | Re-enables BaR welders after auto-offline when a tracked projector has remaining blocks |
 
 ---
 
@@ -219,7 +223,16 @@ static int _field       // no static fields → memory leak
 ## File Map
 
 ```
-RNB.cs          Paste into Programmable Block
-RNB.md          User-facing setup and reference
-RNB-Claude.md   This file — AI agent instructions
+READY TO USE/
+  GUIDE.md                    Complete installation guide
+  RNB-v2.0.0-PasteReady.cs   Minified release script
+DEVELOPMENT/
+  RNB.cs                      Full readable PB source (source of truth)
+  RNB.Project.cs              Generated Visual Studio wrapper
+  RNB.csproj                  Development project
+  RNB.sln                     Visual Studio solution
+DOCUMENTATION/
+  RNB.md                      User-facing reference
+  RNB-Claude.md               This file — AI agent instructions
+  RNB.png                     Project image
 ```

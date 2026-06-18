@@ -1,7 +1,7 @@
-# RNB - Rev NanoBot Manager
+﻿# RNB - Rev NanoBot Manager
 
 Author: RevGamer
-Version: v1.0.0
+Version: v2.0.0
 
 RNB is a Space Engineers Programmable Block script for the **SKO Nanobot Build and Repair System (Maintained)** mod. It monitors BaR/NanoBot welders, queues missing parts into assemblers, tracks projectors, drives LCD pages, and shows a PB boot/live screen automatically.
 
@@ -14,6 +14,8 @@ RNB is a Space Engineers Programmable Block script for the **SKO Nanobot Build a
 
 No toolbar arguments are used. The script is fully automatic.
 
+`../READY TO USE/RNB-v2.0.0-PasteReady.cs` is the compact paste-ready build. It has the same behavior as the readable development source, with comments, blank lines, and indentation removed. See `../READY TO USE/GUIDE.md` for complete setup examples.
+
 ## Custom Data Setup (recommended — keeps block names clean)
 
 ### Programmable Block
@@ -24,6 +26,7 @@ BootSeconds=6
 RescanSeconds=10
 AssemblerQueueSeconds=0.5
 AutoOfflineSeconds=600
+WakeOnProjector=true
 ```
 
 | Setting | Default | Notes |
@@ -32,6 +35,7 @@ AutoOfflineSeconds=600
 | `RescanSeconds` | `10` | How often block roles/pages are rescanned. |
 | `AssemblerQueueSeconds` | `0.5` | How often missing parts are pushed to assemblers. |
 | `AutoOfflineSeconds` | `600` | Idle time before BaR welders are disabled (600 = 10 min). |
+| `WakeOnProjector` | `true` | Re-enable BaR welders when a tagged projector has remaining blocks. |
 
 ### Functional blocks
 
@@ -101,11 +105,19 @@ Name tags still work if preferred. Custom Data takes priority.
 
 Works on any LCD size. Font scales automatically for small vs large panels.
 
+Multiple corner LCDs are supported. If a tagged block exposes more than one text surface, RNB registers all of its surfaces. `Role=Corner` takes priority over page tags on the same surface.
+
+Corner LCDs automatically select a horizontal banner layout for wide, short panels and a centred layout for normal/tall panels. Damaged BaRs override the display with a red `DAMAGED` state.
+
 ## Display Style
 
-- PB surface 0 shows a boot screen on compile, then a compact live overview.
+- PB surface 0 shows a boot screen on compile, then a simple four-line RNB identity screen. Operational information remains on tagged LCD pages.
 - Standard LCDs show fixed pages with a dark navy panel, cyan frame, and monospace text.
 - Corner LCD shows large state text only — designed to be readable from across a room.
+- v2.0 display pages use denser sprite rows and measured text fitting so larger BaR, assembler, and projector lists can fit on one screen.
+- The Status page is a two-column dashboard with system health, build queues, projector totals, support counts, and a one-line alert.
+- NanoBot/BaR and assembler state colours are: green working, cyan idle, yellow offline, red damaged.
+- Assembler details are sorted by clean block name.
 
 ## Assembler Routing
 
@@ -121,6 +133,12 @@ Advanced assemblers receive everything else. If a block is tagged `BasicAssemble
 ## Auto-Offline
 
 RNB disables BaR welders after `AutoOfflineSeconds` of no weld, grind, collect, or active projector work. Manually re-enabling a welder clears the offline state automatically.
+
+Manually switching any BaR from disabled to enabled restarts the full `AutoOfflineSeconds` countdown. This protects manual build-from-scratch work from being switched off immediately because of an older idle timer.
+
+If `WakeOnProjector=true`, RNB also wakes disabled BaR welders when a tracked projector reports remaining blocks. This is useful for small-grid printer drones and repair bays.
+
+In v2.0, a projector only counts as active when it is enabled, functional, working, actively projecting, and has remaining blocks. An OFF or unpowered projector no longer keeps BaRs online. The Projectors page reports `BUILDING`, `OFFLINE`, `NO POWER`, `DAMAGED`, `NO BLUEPRINT`, and `COMPLETE` separately.
 
 ## Troubleshooting
 
