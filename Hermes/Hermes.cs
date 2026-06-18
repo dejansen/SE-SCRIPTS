@@ -452,6 +452,25 @@ private void PollBroadcast()
         long   senderAddr = 0;
         bool   hasAddr    = p.Length >= 3 && long.TryParse(p[2].Trim(), out senderAddr);
 
+        if (_ackEnabled)
+        {
+            bool duplicate = false;
+            for (int i = 0; i < _messages.Count; i++)
+            {
+                if (_messages[i].GridName == gridName && _messages[i].Text == text)
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate)
+            {
+                if (hasAddr)
+                    IGC.SendUnicastMessage(senderAddr, ACK_TAG, raw);
+                continue;
+            }
+        }
+
         _messages.Insert(0, new ReceivedMessage
         {
             GridName  = gridName,
