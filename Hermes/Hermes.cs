@@ -1,5 +1,5 @@
 // =====================================================================
-// HERMES — Intergrid Messaging Service  v1.9
+// HERMES — Intergrid Messaging Service  v2.0
 // =====================================================================
 // Single script for sender, receiver, both, or local roles.
 // Configure via Custom Data on the Programmable Block.
@@ -13,7 +13,7 @@
 // -------------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------------
-private const string VERSION         = "1.9";
+private const string VERSION         = "2.0";
 private const string DEFAULT_CHANNEL = "HERMES";
 private const string DEFAULT_LCD_TAG = "[HERMES]";
 private const string ACK_TAG         = "HERMES_ACK";
@@ -204,6 +204,16 @@ public void Main(string argument, UpdateType updateSource)
 
     if (_mode != ScriptMode.Sender && TryHandleClear(arg))
         return;
+
+    if (arg.ToLowerInvariant().StartsWith("@local:"))
+    {
+        string localText = arg.Substring(7).Trim();
+        if (localText.Length == 0)
+            Echo("@local: requires a message.");
+        else
+            InjectLocal(localText);
+        return;
+    }
 
     if (_mode == ScriptMode.Local)
         InjectLocal(arg);

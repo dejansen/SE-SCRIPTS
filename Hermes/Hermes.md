@@ -1,6 +1,6 @@
 # HERMES — Intergrid Messaging Service
 
-**Version 1.9**
+**Version 2.0**
 
 A single-script intergrid alert system for Space Engineers. Buildings broadcast alerts to a central control room, where they appear on a sprite-rendered LCD dispatch board.
 
@@ -195,7 +195,13 @@ Event Controllers cannot run PBs directly. Use a **Timer Block** as the bridge:
 - Argument: `@PLAYERA:HYDROGEN_LOW`
 - Broadcasts *"Hydrogen tanks critically low"* on channel `PLAYERA` instead of the default
 
-The `@channel:` prefix is optional and per-message. The configured `channel` in Custom Data remains the default for all messages without a prefix. Shortcodes work normally after the `:`.
+**Posting a local-only message (no broadcast):**
+- Argument: `@local:Generator restarted`
+- Injects the message directly into the local log and LCD without transmitting over IGC
+- Works in any mode — in `local` mode the `@local:` prefix is optional but still accepted
+- Shortcodes work normally after `@local:`
+
+The `@channel:` and `@local:` prefixes are per-message. The configured `channel` in Custom Data remains the default for all plain messages. Shortcodes work normally after the `:`.
 
 > **Important:** the channel name after `@` must match the receiver's `channel` config exactly — same capitalisation, same characters, no extra brackets unless the receiver is also configured with them.
 
@@ -315,7 +321,7 @@ HERMES DISPATCH                    HH:mm
 #2  [HH:mm]  GridName
   Message text
 ────────────────────────────────────────
-         Intergrid Messaging  v1.9
+         Intergrid Messaging  v2.0
 ```
 
 **Carousel mode** (`lcd_mode = carousel`):
@@ -339,7 +345,7 @@ The small LCD on the Programmable Block's face shows live status:
    * H E R M E S *
 ══════════════════
  Intergrid Comms
-      v1.9
+      v2.0
 ══════════════════
 Mode: RECEIVER
 Chan: HERMES
