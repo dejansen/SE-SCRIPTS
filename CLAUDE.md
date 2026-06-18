@@ -8,7 +8,7 @@ Guidelines for AI coding agents working in this repository.
 
 **Always stay inside this repository directory.** Never access, read, or write files outside of it. Do not attempt to navigate to parent directories or other projects. If you are unsure of the working directory, read it from the environment context before doing anything.
 
-The working directory is /home/arno/LEARNING/learning-opencode/space-engineers
+The working directory is `F:\Space Engineers Script\SE-SCRIPTS\`
 
 
 ---
@@ -38,32 +38,53 @@ There is no way to run a single test from the command line. All testing is done 
 /
 ├── CLAUDE.md                      # This file
 ├── SE-SCRIPTING-RULES.md          # Verified scripting rules and API reference
+├── SE_BlockTypeIds.md             # Reference: block TypeId/SubtypeId pairs
+├── SE_ItemTypeIds.md              # Reference: item TypeId/SubtypeId pairs
 ├── README.md                      # Repository overview
+├── Autogrid Manager/              # AGM -- ready-to-use release folder (v1.5 line)
+│   ├── AGM.cs                     # Minified, paste-ready PB script (generated -- do not edit directly)
+│   ├── AGM-Full-Guide.md          # Full setup guide: tagging cargo, machines, LCDs, alerts, docks
+│   ├── CLAUDE.md                  # AGM-specific agent instructions (source path, minifier command, key rules)
+│   └── README.md                  # Install steps; states dev source lives outside this repo (path currently stale)
 ├── InventoryMonitor/
 │   ├── InventoryMonitor.cs        # Light-centric inventory monitor (v1)
 │   └── InventoryMonitor.md
 ├── InventoryMonitor2/
 │   ├── InventoryMonitor2.cs       # Container-centric monitor with multi-item and timer/light actions (v2)
-│   └── InventoryMonitor2.md
+│   ├── InventoryMonitor2.md
+│   └── datapads/                  # In-game datapad text for setup, format, actions, troubleshooting, item types
 ├── RedAlert/
 │   ├── RedAlert.cs                # Saves and restores a lighting group state; forces solid red on alert
 │   └── RedAlert.md
-├── R.O.S/
+├── R.O.S/                         # Rev Operating System -- base station + miner fleet
 │   ├── ROS-Main.cs                # Base station: dock monitor, proximity scanner, fleet tracker
-│   ├── ROS-MinerBroadcast.cs      # Miner companion: broadcasts telemetry over IGC
-│   ├── ROS-DockingMonitor.md
-│   └── ROS-MinerBroadcast.md
+│   ├── ROS-Main.md
+│   ├── ROS-FleetBroadcast.cs      # Miner companion: broadcasts telemetry over IGC
+│   ├── ROS-FleetBroadcast.md
+│   └── Claude_ROS.md              # R.O.S-specific agent instructions
 ├── Hermes/
 │   ├── Hermes.cs                  # Intergrid messaging service: sender + receiver in one script
 │   └── Hermes.md
-└── MULE/
-    ├── MULE.cs                    # Autonomous planetary cargo drone: pickup → dropoff round-trip
-    └── MULE.md
+├── MULE/
+│   ├── MULE.cs                    # Autonomous planetary cargo drone: pickup -> dropoff round-trip
+│   └── MULE.md
+├── PTA/                           # Planetary Travel Assistant
+│   ├── PTA.cs                     # Autopilot: horizon stabilizer, cruise/ascend/descend, teach-and-replay autodock
+│   └── PTA.md
+├── RNB/                           # Rev NanoBot Manager (SKO Nanobot mod integration)
+│   ├── DEVELOPMENT/               # RNB.cs, RNB.Project.cs, .sln/.csproj -- formatted dev source
+│   ├── DOCUMENTATION/             # RNB.md, RNB-Claude.md (agent instructions), RNB.png
+│   └── READY TO USE/              # RNB-v2.0.0-PasteReady.cs, GUIDE.md
+└── playground/                    # Proofs of concept, not production scripts
+    ├── HorizonStabilizer.cs       # POC: gyro-based horizon leveling
+    └── HorizonStabilizer.md
 ```
 
 Each script gets:
 - A `.cs` file containing the script code
 - A `.md` file containing the concept documentation and in-game setup instructions
+
+Some subfolders (AGM, R.O.S, RNB) also carry their own `CLAUDE.md` / `*-Claude.md` with project-specific agent instructions (source file paths, minifier commands, key rules). **Read the subfolder's own CLAUDE.md before working on that script** -- it takes precedence over this top-level file for anything specific to that project.
 
 ---
 
