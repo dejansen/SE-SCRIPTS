@@ -171,6 +171,16 @@ If Custom Data is completely empty, AGM may create an all-zero AGM template.
 
 ```text
 @AGM-Stock Definitions START
+Ingot/Iron=0
+Ingot/Nickel=0
+Ingot/Cobalt=0
+Ingot/Silicon=0
+Ingot/Magnesium=0
+Ingot/Silver=0
+Ingot/Gold=0
+Ingot/Platinum=0
+Ingot/Uranium=0
+Ingot/Stone=0
 SteelPlate=1000
 Construction=500M
 Motor=200L
@@ -179,6 +189,11 @@ NATO_25x184mm=all
 Component/Display=50
 @AGM-Stock Definitions END
 ```
+
+New empty Stock containers receive every supported ingot as an explicit
+`Ingot/Subtype=0` entry. This includes iron, nickel, cobalt, silicon,
+magnesium, silver, gold, platinum, uranium, stone/gravel, prototech scrap, and
+scrap. Change only the ingots required by that Stock container.
 
 | Format | Meaning |
 | --- | --- |
